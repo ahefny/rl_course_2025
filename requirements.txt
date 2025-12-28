@@ -1,0 +1,6 @@
+gymnasium==1.2.3
+gymnasium[classic-control]==1.2.3
+gymnasium[box2d]==1.2.3
+stable_baselines3==2.7.1
+torch==2.8.0
+tensorboard==2.20.0

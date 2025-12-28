@@ -88,8 +88,8 @@ def main():
 
     eval_callback = EpisodeEvalCallback(
         eval_env=eval_env,
-        eval_every_episodes=100,
-        record_every_episodes=500,
+        eval_every_episodes=100,    # How often to run evaluation.
+        record_every_episodes=500,  # How often to record video.
         max_steps=500,
         verbose=1,
     )
