@@ -28,9 +28,9 @@ class EpisodeEvalCallback(BaseCallback):
         self._last_eval_at = 0
         self._last_record_at = 0
 
-    def _log_eval_run(self, reward: float, frames: list[np.ndarray]) -> None:
+    def _log_eval_run(self, reward: float, episode_length: int, frames: list[np.ndarray]) -> None:
         self.logger.record("eval/episode_reward", reward)
-        self.logger.record("eval/episode_length", len(frames))
+        self.logger.record("eval/episode_length", episode_length)
         
         if frames:
             video = np.array(frames, dtype=np.uint8).transpose(0, 3, 1, 2)[None]
@@ -44,6 +44,7 @@ class EpisodeEvalCallback(BaseCallback):
         obs, _ = self.eval_env.reset()
         frames: list[np.ndarray] = []
         total_reward = 0.0
+        episode_length = 0
 
         for _ in range(self.max_steps):
             if record:
@@ -51,13 +52,14 @@ class EpisodeEvalCallback(BaseCallback):
                 if frame is not None:
                     frames.append(frame)
 
+            episode_length += 1
             action, _ = self.model.predict(obs, deterministic=True)
             obs, reward, terminated, truncated, _ = self.eval_env.step(action)
             total_reward += float(reward)
             if terminated or truncated:
                 break
 
-        self._log_eval_run(total_reward, frames)
+        self._log_eval_run(total_reward, episode_length, frames)
 
     def _on_step(self) -> bool:
         # Count how many training env episodes ended on this step
