@@ -1,6 +1,10 @@
 gymnasium==1.2.3
 gymnasium[classic-control]==1.2.3
 gymnasium[box2d]==1.2.3
-stable_baselines3==2.7.1
+gymnasium[other]==1.2.3
+moviepy==1.0.3
+requests==2.32.5
+numpy==2.0.0
 torch==2.8.0
 tensorboard==2.20.0
+stable_baselines3==2.7.1
