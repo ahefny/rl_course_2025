@@ -1,0 +1,1 @@
+{"policy": "MlpPolicy", "learning_rate": 0.001, "gamma": 0.99, "n_steps": 3, "buffer_size": 100000, "learning_starts": 10000, "batch_size": 128, "train_freq": 4, "gradient_steps": 1, "n_envs": 4, "tau": 0.001, "target_update_interval": 1, "exploration_fraction": 0.01, "exploration_initial_eps": 0.1, "exploration_final_eps": 0.001, "total_timesteps": 1000000}
