@@ -90,7 +90,8 @@ for episode in range(100000):
     with torch.no_grad():
         last_reward = value_fn(torch.tensor(obs)) if truncated else 0.0    
     returns = compute_returns(rewards + [last_reward], gamma)[..., :-1]
-    # returns = torch.sum(torch.tensor(rewards))    
+    # Uncomment to disable the causality trick.
+    # returns = torch.sum(torch.tensor(rewards))
 
     # ----- Value loss -----
     values = value_fn(states)
