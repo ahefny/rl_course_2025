@@ -2,6 +2,7 @@ gymnasium==1.2.3
 gymnasium[classic-control]==1.2.3
 gymnasium[box2d]==1.2.3
 gymnasium[other]==1.2.3
+gymnasium[mujoco]==1.2.3
 moviepy==1.0.3
 requests==2.32.5
 numpy==2.0.0
