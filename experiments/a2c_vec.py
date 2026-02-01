@@ -113,20 +113,20 @@ for step in range(1000000):
         
         # Flatten for batch processing: [n_steps * n_envs, ...]
         n_steps = states_batch.shape[0]
-        states_flat = states_batch.view(-1, obs_dim)
-        actions_flat = actions_batch.view(-1)
-        rewards_flat = rewards_batch.view(-1)
-        next_states_flat = next_states_batch.view(-1, obs_dim)
-        dones_flat = dones_batch.view(-1)
+        # states_flat = states_batch.view(-1, obs_dim)
+        # actions_flat = actions_batch.view(-1)
+        # rewards_flat = rewards_batch.view(-1)
+        # next_states_flat = next_states_batch.view(-1, obs_dim)
+        # dones_flat = dones_batch.view(-1)
         
         # Compute TD(0) targets: r + gamma * V(s') for non-terminal, r for terminal
         with torch.no_grad():
-            next_values = value_fn(next_states_flat)  # Shape: [n_steps * n_envs]
+            next_values = value_fn(next_states_batch)  # Shape: [n_steps, n_envs]
             # For terminal states, next value is 0
-            td_targets = rewards_flat + gamma * next_values * (~dones_flat).float()
+            td_targets = rewards_batch + gamma * next_values * (~dones_batch).float()
         
         # Compute values before update (for advantage computation)
-        values = value_fn(states_flat)  # Shape: [n_steps * n_envs]
+        values = value_fn(states_batch)  # Shape: [n_steps, n_envs]
         
         # ----- Value loss (TD(0) target) -----
         value_loss = ((td_targets - values) ** 2).mean()
@@ -140,8 +140,8 @@ for step in range(1000000):
         # Use values before update (detached) for advantage computation
         advantages = td_targets - values.detach()
         
-        dist = policy(states_flat)
-        log_probs = dist.log_prob(actions_flat)
+        dist = policy(states_batch)
+        log_probs = dist.log_prob(actions_batch)
         
         policy_loss = -(log_probs * advantages).mean()
         
