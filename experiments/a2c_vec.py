@@ -59,7 +59,6 @@ policy_optim = optim.Adam(policy.parameters(), lr=1e-3)
 value_optim = optim.Adam(value_fn.parameters(), lr=1e-2)
 
 gamma = 0.99
-update_frequency = 5  # Update every N steps (for stability, but using TD(0) bootstrapping)
 
 states = []
 actions = []
@@ -69,6 +68,7 @@ dones = []
 
 step_count = 0
 episode_count = 0
+last_episode_count = 0
 episode_returns = []  # Track returns for completed episodes
 
 obs, _ = env.reset()
@@ -103,7 +103,7 @@ for step in range(1000000):
             episode_rewards[env_idx] = 0.0
     
     # Update using TD(0) bootstrapping
-    if step_count >= update_frequency or end_episode.any():
+    if step_count >= 1 or end_episode.any():
         # Convert to tensors
         states_batch = torch.stack(states)  # Shape: [n_steps, n_envs, obs_dim]
         actions_batch = torch.stack(actions)  # Shape: [n_steps, n_envs]
@@ -113,11 +113,6 @@ for step in range(1000000):
         
         # Flatten for batch processing: [n_steps * n_envs, ...]
         n_steps = states_batch.shape[0]
-        # states_flat = states_batch.view(-1, obs_dim)
-        # actions_flat = actions_batch.view(-1)
-        # rewards_flat = rewards_batch.view(-1)
-        # next_states_flat = next_states_batch.view(-1, obs_dim)
-        # dones_flat = dones_batch.view(-1)
         
         # Compute TD(0) targets: r + gamma * V(s') for non-terminal, r for terminal
         with torch.no_grad():
@@ -129,7 +124,8 @@ for step in range(1000000):
         values = value_fn(states_batch)  # Shape: [n_steps, n_envs]
         
         # ----- Value loss (TD(0) target) -----
-        value_loss = ((td_targets - values) ** 2).mean()
+        # value_loss = ((td_targets - values) ** 2).mean()
+        value_loss = nn.functional.mse_loss(values, td_targets)
         
         value_optim.zero_grad()
         value_loss.backward()
@@ -142,7 +138,6 @@ for step in range(1000000):
         
         dist = policy(states_batch)
         log_probs = dist.log_prob(actions_batch)
-        
         policy_loss = -(log_probs * advantages).mean()
         
         policy_optim.zero_grad()
@@ -158,14 +153,18 @@ for step in range(1000000):
         step_count = 0
         
         # Print evaluation metrics including episode returns
-        if len(episode_returns) > 0 and episode_count % 50 == 0:
+        if len(episode_returns) > 0 and episode_count % 50 == 0 and episode_count > last_episode_count:
+            last_episode_count = episode_count
             n_recent = min(50, len(episode_returns))
             recent_returns = episode_returns[-n_recent:]
             mean_return = np.mean(recent_returns)
-            max_return = np.max(recent_returns)
+            max_return = np.max(recent_returns)            
             min_return = np.min(recent_returns)
+            p10_return = np.percentile(recent_returns, 10)
+            p90_return = np.percentile(recent_returns, 90)
+            median_return = np.median(recent_returns)
             print(f"Episode {episode_count}, "
-                  f"Return: {mean_return:.1f} (min: {min_return:.1f}, max: {max_return:.1f}), "
+                  f"Return: {mean_return:.1f} (min: {min_return:.1f}, p10: {p10_return:.1f}, p90: {p90_return:.1f}, median: {median_return:.1f}, max: {max_return:.1f})" 
                   f"Policy Loss: {policy_loss:.3f}, Value Loss: {value_loss:.3f}")
     
     # Vectorized environments automatically reset terminated/truncated envs

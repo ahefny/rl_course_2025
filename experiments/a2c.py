@@ -48,7 +48,7 @@ policy_optim = optim.Adam(policy.parameters(), lr=1e-3)
 value_optim = optim.Adam(value_fn.parameters(), lr=1e-2)
 
 gamma = 0.99
-update_frequency = 5  # Update every N steps (for stability, but using TD(0) bootstrapping)
+update_frequency = 1  # Update every N steps (for stability, but using TD(0) bootstrapping)
 
 states = []
 actions = []
