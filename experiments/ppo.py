@@ -50,8 +50,10 @@ class PPOTrainingConfig:
     # Training
     total_timesteps: int = 1_000_000
 
-# ENVIRONMENT_NAME = "Hopper-v5"
-ENVIRONMENT_NAME = "Walker2d-v5"
+ENVIRONMENT_NAME = "Hopper-v5"
+# ENVIRONMENT_NAME = "Walker2d-v5"
+# ENVIRONMENT_NAME = "BipedalWalker-v3"
+# ENVIRONMENT_NAME = "Humanoid-v5"
 CONFIG = PPOTrainingConfig()
 
 
