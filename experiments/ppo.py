@@ -14,7 +14,7 @@ import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import VecNormalize
-from experiment_utils import EpisodeEvalCallback
+from experiment_utils import EpisodeEvalCallback, NormalizedEnvWrapper
 
 
 @dataclass
@@ -50,61 +50,9 @@ class PPOTrainingConfig:
     # Training
     total_timesteps: int = 1_000_000
 
-ENVIRONMENT_NAME = "Hopper-v5"
+# ENVIRONMENT_NAME = "Hopper-v5"
+ENVIRONMENT_NAME = "Walker2d-v5"
 CONFIG = PPOTrainingConfig()
-
-
-class NormalizedEnvWrapper(gym.Wrapper):
-    """Environment wrapper that normalizes observations using VecNormalize statistics.
-    
-    This wrapper applies the same normalization as VecNormalize to a single gym.Env,
-    using statistics from a training VecNormalize environment. This ensures evaluation
-    uses the same observation normalization as training.
-    """
-    
-    def __init__(self, env: gym.Env, vec_normalize: VecNormalize):
-        """
-        Args:
-            env: The gymnasium environment to wrap
-            vec_normalize: The VecNormalize wrapper from training environment
-                          (used to get normalization statistics)
-        """
-        super().__init__(env)
-        self.vec_normalize = vec_normalize
-        self.norm_obs = vec_normalize.norm_obs
-        self.clip_obs = vec_normalize.clip_obs
-    
-    def _normalize_obs(self, obs: np.ndarray) -> np.ndarray:
-        """Normalize observation using training env's normalization stats."""
-        if not self.norm_obs:
-            return obs
-        
-        obs_rms = self.vec_normalize.obs_rms
-        if obs_rms is None:
-            return obs
-        
-        # Apply same normalization as VecNormalize
-        normalized_obs = (obs - obs_rms.mean) / np.sqrt(obs_rms.var + 1e-8)
-        
-        # Apply clipping if configured
-        if self.clip_obs > 0:
-            normalized_obs = np.clip(
-                normalized_obs, 
-                -self.clip_obs, 
-                self.clip_obs
-            )
-        
-        return normalized_obs
-    
-    def reset(self, **kwargs):
-        """Reset environment and normalize observation."""
-        obs, info = self.env.reset(**kwargs)
-        return self._normalize_obs(obs), info
-    
-    def step(self, action):
-        """Step environment and normalize observation."""
-        obs, reward, terminated, truncated, info = self.env.step(action)
-        return self._normalize_obs(obs), reward, terminated, truncated, info
 
 
 def main():    
