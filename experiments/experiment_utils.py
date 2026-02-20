@@ -18,6 +18,8 @@ class EpisodeEvalCallback(BaseCallback):
         record_every_episodes: int = 1000,
         max_steps: int = 500,
         verbose: int = 0,
+        deterministic: bool = True,
+        record_frame_skip: int = 1,
     ):
         super().__init__(verbose)
         self.eval_env = eval_env
@@ -27,7 +29,8 @@ class EpisodeEvalCallback(BaseCallback):
         self._episode_count = 0
         self._last_eval_at = 0
         self._last_record_at = 0
-
+        self._deterministic = deterministic  
+        self._record_frame_skip = record_frame_skip
     def _log_eval_run(self, reward: float, episode_length: int, frames: list[np.ndarray]) -> None:
         self.logger.record("eval/episode_reward", reward)
         self.logger.record("eval/episode_length", episode_length)
@@ -36,7 +39,7 @@ class EpisodeEvalCallback(BaseCallback):
             video = np.array(frames, dtype=np.uint8).transpose(0, 3, 1, 2)[None]
             self.logger.record(
                 "eval/video",
-                Video(video, fps=30),
+                Video(video[:, ::self._record_frame_skip], fps=30),
                 exclude=("stdout", "log", "json", "csv"),
             )
 
@@ -53,7 +56,7 @@ class EpisodeEvalCallback(BaseCallback):
                     frames.append(frame)
 
             episode_length += 1
-            action, _ = self.model.predict(obs, deterministic=True)
+            action, _ = self.model.predict(obs, deterministic=self._deterministic)
             obs, reward, terminated, truncated, _ = self.eval_env.step(action)
             total_reward += float(reward)
             if terminated or truncated:
