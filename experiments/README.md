@@ -1,11 +1,26 @@
-## Running Experiments
+# Running Experiments
 
-### Option 1: Run Locally
+## Option 1: Run Locally
 
-#### One time setup
+### One-time Setup
 
-Make sure Python, PIP and Git are installed. It is good to run experiments
-in a Python environment if you do not want to mess with your main Python installation.
+Make sure Python, PIP and Git are installed.
+
+#### [Optional] Creating and Activating a Python Virtual Environment
+
+It is good to install the packages needed for experiments in a separate Python
+virtual environment in order not to mess with your main Python installation
+
+```sh
+# Create a new environment in `.venv`.
+# You can replace `.venv` with any path.
+python3 -m venv .venv
+
+# Activate environment
+source .venv/bin/activate
+```
+
+#### Installing Packages
 
 In an empty directory, run
 ```sh
@@ -13,7 +28,7 @@ git clone https://github.com/ahefny/rl_course_2025.git .
 pip install -r requirements.txt
 ```
 
-#### To run an experiment
+### Running Experiments
 
 ```sh
 python experiments/dqn.py  # To run dqn.py
@@ -24,7 +39,7 @@ In another terminal run this command to view tensorboard. Open the browser on th
 tensorboard --logdir runs
 ```
 
-### Option 2: Run in Colab
+## Option 2: Run in Colab
 
 Create and run these cells
 
