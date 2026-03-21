@@ -1,0 +1,28 @@
+policy: "MlpPolicy"
+
+# Repeat of best-known config (q7n2m), second replicate
+gamma: 0.98
+
+learning_rate: 0.0002
+learning_rate_final: 0.00005
+
+buffer_size: 1000000
+learning_starts: 5000
+batch_size: 512
+
+tau: 0.01
+train_freq: 1
+gradient_steps: 1
+ent_coef: "auto"
+target_update_interval: 1
+target_entropy: "auto"
+
+use_sde: false
+sde_sample_freq: -1
+
+n_envs: 8
+
+norm_obs: true
+norm_reward: false
+clip_obs: 10.0
+clip_reward: 10.0
