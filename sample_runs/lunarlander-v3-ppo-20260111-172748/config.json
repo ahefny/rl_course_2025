@@ -1,0 +1,1 @@
+{"policy": "MlpPolicy", "learning_rate": 0.0003, "gamma": 0.99, "n_steps": 2048, "batch_size": 64, "n_epochs": 10, "clip_range": 0.2, "ent_coef": 0.0, "vf_coef": 0.5, "max_grad_norm": 0.5, "n_envs": 4, "total_timesteps": 1000000}
