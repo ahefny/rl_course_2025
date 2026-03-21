@@ -4,6 +4,7 @@ import gymnasium as gym
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import Video
 from stable_baselines3.common.vec_env import VecNormalize
+from typing import Callable
 
 class EpisodeEvalCallback(BaseCallback):
     """Periodically runs a test episode using the current greedy policy.
@@ -148,3 +149,13 @@ class NormalizedEnvWrapper(gym.Wrapper):
         """Step environment and normalize observation."""
         obs, reward, terminated, truncated, info = self.env.step(action)
         return self._normalize_obs(obs), reward, terminated, truncated, info
+
+
+def get_linear_learning_rate_schedule(
+    lr_inital: float,
+    lr_final: float,
+) -> Callable[[float], float]:
+    def lr_fn(progress_remaining: float):
+        return progress_remaining * (lr_inital - lr_final) + lr_final
+
+    return lr_fn
