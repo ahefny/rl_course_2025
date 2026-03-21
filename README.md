@@ -70,11 +70,8 @@ clear_output()
 # Option 1: Copy the experiment code (e.g. `dqn.py`) to the cell and run.
 # This keeps your edits if the Colab session is terminated and local files are lost.
 
-# Option 2: Run this
-from importlib import reload
-import dqn as experiment
-reload(experiment)
-experiment.main()
+# Option 2: Run the experiment as a shell command
+!python3 dqn.py
 ```
 
 
