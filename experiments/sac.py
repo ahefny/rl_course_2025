@@ -98,6 +98,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Name of the run.",
     )
+    parser.add_argument(
+        "--root-log-dir",
+        type=str,
+        default="runs",
+        help="Root directory for logging.",
+    )
     return parser.parse_args()
 
 
@@ -126,7 +132,8 @@ def main():
     else:
         timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         run_name = f"{environment_label}-sac-{timestamp}"
-    log_dir = os.path.join("runs", run_name)
+    root_log_dir = Path(args.root_log_dir).expanduser().resolve()
+    log_dir = root_log_dir / run_name
     os.makedirs(log_dir, exist_ok=True)
 
     with open(f"{log_dir}/config.json", "w") as f:
