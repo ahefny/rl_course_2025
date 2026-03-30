@@ -331,5 +331,5 @@ def parse_string_list(text: str) -> list[str]:
             return [item.strip() for item in list(parsed.values())]
         else:
             return [str(parsed)]
-    except json.JSONDecodeError:
+    except:
         return [text]
