@@ -1,0 +1,10 @@
+ipykernel==7.2.0
+rank-bm25==0.2.2
+datasets>=2.16.0
+huggingface_hub>=0.24.0
+gymnasium>=1.0.0
+numpy>=2.0.0
+torch>=2.0.0
+transformers>=4.36.0
+accelerate>=1.13.0
+dotenv>=0.19.0
