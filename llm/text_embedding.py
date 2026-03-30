@@ -1,8 +1,8 @@
 import numpy as np
 import torch
-from transformers import AutoModel, AutoTokenizer
+from transformers import BertModel, BertTokenizer
 
-_BERT_EMBEDDER_CACHE: dict[str, tuple[AutoModel, AutoTokenizer]] = {}
+_BERT_EMBEDDER_CACHE: dict[str, tuple[BertModel, BertTokenizer]] = {}
 
 class TextEmbedder:
     def __init__(self, embedding_dim: int):
@@ -11,10 +11,10 @@ class TextEmbedder:
     def embed(self, text: str) -> torch.Tensor:
         raise NotImplementedError
 
-def _get_bert_embedder(model_name: str = "google-bert/bert-base-uncased", device: str = "cpu") -> tuple[AutoModel, AutoTokenizer]:
+def _get_bert_embedder(model_name: str = "google-bert/bert-base-uncased", device: str = "cpu") -> tuple[BertModel, BertTokenizer]:
     if model_name not in _BERT_EMBEDDER_CACHE:
-        model = AutoModel.from_pretrained(model_name, device_map=device)
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = BertModel.from_pretrained(model_name, device_map=device)
+        tokenizer = BertTokenizer.from_pretrained(model_name)
         model.eval()
         _BERT_EMBEDDER_CACHE[model_name] = (model, tokenizer)
     return _BERT_EMBEDDER_CACHE[model_name]
@@ -33,7 +33,7 @@ class BertEmbedder(TextEmbedder):
         inputs = self.tokenizer(text, return_tensors="pt", padding=True, truncation=True)
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
         outputs = self.model(**inputs)
-        embedding = outputs.last_hidden_state.mean(dim=1).squeeze(0)
+        embedding = outputs.pooler_output.squeeze(0)
         embedding = self._projection_matrix @ embedding
         norm = embedding.norm()
         if norm > 0:
