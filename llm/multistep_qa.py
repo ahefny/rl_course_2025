@@ -221,7 +221,14 @@ class MultistepQAEnv(gym.Env):
         if seed is not None:
             self._rng = np.random.default_rng(seed)
         self._episode_step = 0
-        self._ex = self.examples[int(self._rng.integers(0, len(self.examples)))]               
+        options = options or {}
+        if "example_index" in options:
+            idx = int(options["example_index"])
+            if not (0 <= idx < len(self.examples)):
+                raise ValueError(f"example_index out of range: {idx}")
+            self._ex = self.examples[idx]
+        else:
+            self._ex = self.examples[int(self._rng.integers(0, len(self.examples)))]
 
         self._state = State(
             question=self._ex.question,
@@ -403,7 +410,7 @@ class MultistepQAEnv(gym.Env):
             truncated = not terminated
             if not terminated:
                 # force terminal score without extra STOP
-                reward += best_f1_over_gold(self._state.last_answer, self._ex.gold_answers) * self.answer_dense_scale
+                # reward += best_f1_over_gold(self._state.last_answer, self._ex.gold_answers) * self.answer_dense_scale
                 terminated = True
 
         print(f"*** REWARD ***: {reward}")
@@ -495,11 +502,31 @@ def build_task(
     return fixed_examples, corpus_ids, uniq
 
 
+def normalize_returns_across_rollouts(
+    rollouts_returns: Sequence[Sequence[float]],
+    eps: float = 1e-8,
+) -> List[List[float]]:
+    """Per-timestep z-score of return-to-go across rollouts that reached that step."""
+    n = len(rollouts_returns)
+    out: List[List[float]] = []
+    for i in range(n):
+        ri = rollouts_returns[i]
+        norm_i: List[float] = []
+        for t in range(len(ri)):
+            vals = [rollouts_returns[j][t] for j in range(n) if t < len(rollouts_returns[j])]
+            mu = float(np.mean(vals))
+            sig = float(np.std(vals)) + eps
+            norm_i.append((ri[t] - mu) / sig)
+        out.append(norm_i)
+    return out
+
+
 def train_reinforce(
     total_episodes: int = 100_000,
     gamma: float = 0.99,
     lr: float = 1e-3,
     seed: int = 0,
+    rollouts_per_context: int = 8,
 ) -> None:
     examples, corpus_ids, corpus_texts = build_task(
         n_examples=500, n_corpus_docs=400, seed=seed
@@ -524,39 +551,61 @@ def train_reinforce(
     obs_dim = env.obs_dim
     policy = PolicyNet(obs_dim).to(DEVICE)
     opt = optim.Adam(policy.parameters(), lr=lr)
+    rng_ep = np.random.default_rng(seed)
 
     for ep in range(total_episodes):
-        
-        obs, _ = env.reset(seed=ep + seed * 1000)
+        example_idx = int(rng_ep.integers(0, len(env.examples)))
+        base_seed = int(ep + seed * 1000)
 
         print("================================================")
-        print(f"Episode {ep}")
-        print(f"Question: {env._ex.question}")
-        print(f"Gold Answers: {env._ex.gold_answers}")
+        print(f"Episode {ep} (example_index={example_idx}, {rollouts_per_context} rollouts)")
+        print(f"Question: {env.examples[example_idx].question}")
+        print(f"Gold Answers: {env.examples[example_idx].gold_answers}")
         print("------------------------------------------------")
 
-        log_probs: List[torch.Tensor] = []
-        rewards: List[float] = []
-        done = False
-        while not done:
-            s = obs.detach()
-            dist = policy(s)
-            a = dist.sample()            
-            log_probs.append(dist.log_prob(a))
-            # a = torch.tensor(QAAction.QUERY.value, dtype=torch.int64).to(a.device)
-            obs, r, term, trunc, _ = env.step(int(a.item()))
-            rewards.append(float(r))
-            done = term or trunc
+        rollouts_log_probs: List[List[torch.Tensor]] = []
+        rollouts_rewards: List[List[float]] = []
 
-        lp = torch.stack(log_probs)
-        returns = compute_returns(rewards, gamma)
-        ret_t = torch.tensor(returns, dtype=torch.float32).to(lp.device)        
-        loss = -(lp * ret_t).sum()
+        for rollout_idx in range(rollouts_per_context):
+            print("================================================")
+            print(f"Rollout {rollout_idx + 1} of {rollouts_per_context}")
+            print("================================================")
+
+            obs, _ = env.reset(
+                seed=base_seed,
+                options={"example_index": example_idx},
+            )
+            log_probs: List[torch.Tensor] = []
+            rewards: List[float] = []
+            done = False
+            while not done:
+                s = obs.detach()
+                dist = policy(s)
+                a = dist.sample()
+                log_probs.append(dist.log_prob(a))
+                obs, r, term, trunc, _ = env.step(int(a.item()))
+                rewards.append(float(r))
+                done = term or trunc
+
+            rollouts_log_probs.append(log_probs)
+            rollouts_rewards.append(rewards)
+
+        raw_returns = [compute_returns(rw, gamma) for rw in rollouts_rewards]
+        normalized = normalize_returns_across_rollouts(raw_returns)
+
+        loss = torch.zeros((), device=DEVICE)
+        for log_probs, norm_ret in zip(rollouts_log_probs, normalized):
+            lp = torch.stack(log_probs)
+            ret_t = torch.tensor(norm_ret, dtype=torch.float32, device=lp.device)
+            loss = loss + -(lp * ret_t).sum()
+        loss = loss / rollouts_per_context
 
         opt.zero_grad()
         loss.backward()
         opt.step()
 
+        last_rw = rollouts_rewards[-1]
+        raw_sum = float(sum(last_rw))
         print("------------------------------------------------")
         print(f"Episode {ep}")
         print(f"Question: {env._ex.question}")
@@ -564,7 +613,7 @@ def train_reinforce(
         print(f"Gold Answers: {env._ex.gold_answers}")
         print(f"Best F1: {best_f1_over_gold(env._state.last_answer, env._ex.gold_answers)}")
         print(f"Loss: {loss.item()}")
-        print(f"Return: {sum(rewards)}")
+        print(f"Return (last rollout): {raw_sum}")
         print("================================================")
 
 
