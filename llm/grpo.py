@@ -1,0 +1,194 @@
+"""Minimal GRPO training example: a small LLM on GSM8K math reasoning.
+
+We fine-tune `Qwen/Qwen2.5-0.5B-Instruct` with TRL's `GRPOTrainer`. The model is
+asked to produce reasoning inside `<think>...</think>` and a final number inside
+`<answer>...</answer>`. Two reward functions are used:
+
+  * `correctness_reward`: +1.0 if the predicted number matches the GSM8K gold
+    answer, else 0.0.
+  * `format_reward`: +0.5 if the output contains the required tag structure.
+
+Run:
+
+    python llm/grpo.py
+
+The defaults below are tuned for a single ~6GB GPU: we use LoRA (so we don't
+pay Adam state on the full base model), enable gradient checkpointing, and
+keep batch / completion length small. If you have more memory, raise
+`per_device_train_batch_size`, `num_generations`, and `max_completion_length`.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import List, Optional
+
+import torch
+from datasets import load_dataset
+from peft import LoraConfig
+from transformers import AutoTokenizer
+from trl import GRPOConfig, GRPOTrainer
+
+
+MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
+DATASET_NAME = "openai/gsm8k"
+OUTPUT_DIR = "outputs/grpo_gsm8k"
+
+SYSTEM_PROMPT = (
+    "You are a careful math tutor. Solve the problem step by step.\n"
+    "Put your reasoning between <think> and </think>, then put the final "
+    "numeric answer (digits only) between <answer> and </answer>."
+)
+
+
+# ---------------------------------------------------------------------------
+# Answer parsing
+# ---------------------------------------------------------------------------
+
+_GOLD_RE = re.compile(r"####\s*(-?[\d,\.]+)")
+_ANSWER_TAG_RE = re.compile(r"<answer>(.*?)</answer>", re.DOTALL)
+_NUMBER_RE = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
+_FORMAT_RE = re.compile(r"<think>.*?</think>\s*<answer>.*?</answer>", re.DOTALL)
+
+
+def _extract_gold(answer_field: str) -> Optional[str]:
+    """GSM8K answers end with `#### <number>`."""
+    m = _GOLD_RE.search(answer_field)
+    return m.group(1).replace(",", "").strip() if m else None
+
+
+def _extract_pred(completion: str) -> Optional[str]:
+    """Lenient extraction.
+
+    Look for the last number inside <answer>...</answer>. If no tag exists
+    (e.g. completion was truncated), fall back to the last number anywhere
+    in the text. This makes the correctness signal much denser, which is
+    important early in GRPO when most generations are messy.
+    """
+    tag = _ANSWER_TAG_RE.search(completion)
+    search_in = tag.group(1) if tag else completion
+    matches = _NUMBER_RE.findall(search_in)
+    return matches[-1].replace(",", "").strip() if matches else None
+
+
+def _to_float(s: Optional[str]) -> Optional[float]:
+    if s is None:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Dataset
+# ---------------------------------------------------------------------------
+
+def build_dataset(tokenizer, split: str, n: Optional[int] = None):
+    """Build a GRPO-ready dataset with `prompt` and `ground_truth` columns."""
+    ds = load_dataset(DATASET_NAME, "main", split=split)
+    if n is not None:
+        ds = ds.select(range(min(n, len(ds))))
+
+    def _format(example):
+        prompt = tokenizer.apply_chat_template(
+            [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": example["question"]},
+            ],
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        return {"prompt": prompt, "ground_truth": _extract_gold(example["answer"])}
+
+    return ds.map(_format, remove_columns=ds.column_names)
+
+
+# ---------------------------------------------------------------------------
+# Reward functions (TRL passes prompts/completions/dataset columns as kwargs)
+# ---------------------------------------------------------------------------
+
+def correctness_reward(completions: List[str], ground_truth: List[str], **_) -> List[float]:
+    rewards: List[float] = []
+    for completion, gold in zip(completions, ground_truth):
+        pred = _to_float(_extract_pred(completion))
+        gold_f = _to_float(gold)
+        if pred is None or gold_f is None:
+            rewards.append(0.0)
+        else:
+            rewards.append(1.0 if abs(pred - gold_f) < 1e-4 else 0.0)
+    return rewards
+
+
+def format_reward(completions: List[str], **_) -> List[float]:
+    return [0.5 if _FORMAT_RE.search(c) else 0.0 for c in completions]
+
+
+# ---------------------------------------------------------------------------
+# Train
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+
+    train_ds = build_dataset(tokenizer, split="train", n=512)
+    eval_ds = build_dataset(tokenizer, split="test", n=64)
+
+    use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+
+    # LoRA keeps the base model frozen, so Adam state is tiny and a 0.5B model
+    # fits in ~6GB during GRPO (policy + generation buffers). beta=0.0 also
+    # avoids loading a separate reference model.
+    peft_config = LoraConfig(
+        r=8,
+        lora_alpha=16,
+        lora_dropout=0.0,
+        bias="none",
+        task_type="CAUSAL_LM",
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+    )
+
+    # generation_batch_size = per_device_train_batch_size * num_processes
+    #                         * steps_per_generation (== grad-accum by default).
+    # It must be divisible by num_generations and contain full prompt groups.
+    # Here: 1 * 1 * 4 = 4, divisible by num_generations=4 -> 1 group / gen step.
+    config = GRPOConfig(
+        output_dir=OUTPUT_DIR,
+        learning_rate=1e-5,
+        per_device_train_batch_size=1,
+        per_device_eval_batch_size=4,
+        gradient_accumulation_steps=4,
+        gradient_checkpointing=True,
+        num_generations=4,
+        max_completion_length=256,
+        temperature=0.9,
+        beta=0.0,
+        num_train_epochs=1,
+        logging_steps=5,
+        save_steps=200,
+        eval_strategy="no",
+        bf16=use_bf16,
+        fp16=not use_bf16 and torch.cuda.is_available(),
+        report_to=[],
+        log_completions=True,
+        num_completions_to_print=2,
+        seed=42,
+    )
+
+    trainer = GRPOTrainer(
+        model=MODEL_NAME,
+        reward_funcs=[correctness_reward, format_reward],
+        args=config,
+        train_dataset=train_ds,
+        eval_dataset=eval_ds,
+        processing_class=tokenizer,
+        peft_config=peft_config,
+    )
+
+    trainer.train()
+    trainer.save_model(OUTPUT_DIR)
+    tokenizer.save_pretrained(OUTPUT_DIR)
+
+
+if __name__ == "__main__":
+    main()
