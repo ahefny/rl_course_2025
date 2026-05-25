@@ -1,4 +1,4 @@
-# Running Experiments
+# Running Deep RL Experiments
 
 ## Option 1: Run Locally
 
@@ -23,18 +23,20 @@ source .venv/bin/activate
 #### Installing Packages
 
 In an empty directory, run
+
 ```sh
 git clone https://github.com/ahefny/rl_course_2025.git .
-pip install -r requirements.txt
+pip install -r deep_rl/requirements.txt
 ```
 
 ### Running Experiments
 
 ```sh
-python experiments/dqn.py  # To run dqn.py
+python deep_rl/dqn.py  # To run dqn.py
 ```
 
 In another terminal run this command to view tensorboard. Open the browser on the output link.
+
 ```
 tensorboard --logdir runs
 ```
@@ -51,21 +53,22 @@ from IPython.display import clear_output
 !mkdir -p rl_course_repo
 !rm -rf rl_course_repo
 !git clone https://github.com/ahefny/rl_course_2025.git rl_course_repo
-!pip install -r rl_course_repo/requirements_colab.txt
-!mv rl_course_repo/experiments/* .
+!pip install -r rl_course_repo/deep_rl/requirements_colab.txt
+!mv rl_course_repo/deep_rl/* .
 !rm -rf rl_course_repo
 
 clear_output()
 ```
 
-2. Launches tensorboard
+1. Launches tensorboard
 
 ```python
 %reload_ext tensorboard
 %tensorboard --logdir runs
 ```
 
-3. Runs experiment
+1. Runs experiment
+
 ```python
 # Option 1: Copy the experiment code (e.g. `dqn.py`) to the cell and run.
 # This keeps your edits if the Colab session is terminated and local files are lost.
@@ -73,6 +76,4 @@ clear_output()
 # Option 2: Run the experiment as a shell command
 !python3 dqn.py
 ```
-
-
 
