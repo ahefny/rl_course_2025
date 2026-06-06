@@ -1,8 +1,13 @@
 """Minimal GRPO training example: a small LLM on GSM8K math reasoning.
 
-We fine-tune `Qwen/Qwen2.5-0.5B-Instruct` with TRL's `GRPOTrainer`. The model is
-asked to produce reasoning inside `<think>...</think>` and a final number inside
-`<answer>...</answer>`. Two reward functions are used:
+We fine-tune `Qwen/Qwen2.5-0.5B-Instruct` in two stages:
+
+  1. **SFT warm-up** (`SFTTrainer`): teach the required output format by supervising
+     on GSM8K solutions wrapped in `<think>...</think>` and
+     `<answer>...</answer>`.
+  2. **GRPO** (`GRPOTrainer`): optimize correctness and format with verifiable rewards.
+
+Two reward functions are used in the GRPO stage:
 
   * `correctness_reward`: +1.0 if the predicted number matches the GSM8K gold
     answer, else 0.0.
@@ -27,7 +32,7 @@ import torch
 from datasets import load_dataset
 from peft import LoraConfig
 from transformers import AutoTokenizer
-from trl import GRPOConfig, GRPOTrainer
+from trl import GRPOConfig, GRPOTrainer, SFTConfig, SFTTrainer
 
 
 MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
@@ -46,6 +51,7 @@ SYSTEM_PROMPT = (
 # ---------------------------------------------------------------------------
 
 _GOLD_RE = re.compile(r"####\s*(-?[\d,\.]+)")
+_GSM8K_MARKER_RE = re.compile(r"<<[^>]+>>")
 _ANSWER_TAG_RE = re.compile(r"<answer>(.*?)</answer>", re.DOTALL)
 _NUMBER_RE = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
 _FORMAT_RE = re.compile(r"<think>.*?</think>\s*<answer>.*?</answer>", re.DOTALL)
@@ -83,6 +89,45 @@ def _to_float(s: Optional[str]) -> Optional[float]:
 # ---------------------------------------------------------------------------
 # Dataset
 # ---------------------------------------------------------------------------
+
+def _format_sft_completion(answer_field: str) -> Optional[str]:
+    """Wrap a GSM8K solution in the tags GRPO expects."""
+    gold = _extract_gold(answer_field)
+    if gold is None:
+        return None
+    reasoning = _GOLD_RE.sub("", answer_field).strip()
+    reasoning = _GSM8K_MARKER_RE.sub("", reasoning).strip()
+    return (
+        f"<think>\n{reasoning}\n</think>\n"
+        f"<answer>{gold}</answer>"
+    )
+
+
+def build_sft_dataset(split: str, n: Optional[int] = None):
+    """Build a prompt-completion SFT dataset for each GSM8K example.
+
+    We use conversational `prompt` / `completion` columns rather than `messages`
+    with `assistant_only_loss=True`, because Qwen's chat template does not include
+    the `{% generation %}` keyword needed for assistant token masks.
+    """
+    ds = load_dataset(DATASET_NAME, "main", split=split)
+    if n is not None:
+        ds = ds.select(range(min(n, len(ds))))
+
+    def _format(example):
+        completion = _format_sft_completion(example["answer"])
+        if completion is None:
+            return {"prompt": [], "completion": []}
+        return {
+            "prompt": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": example["question"]},
+            ],
+            "completion": [{"role": "assistant", "content": completion}],
+        }
+
+    return ds.map(_format, remove_columns=ds.column_names).filter(lambda x: len(x["prompt"]) > 0)
+
 
 def build_dataset(tokenizer, split: str, n: Optional[int] = None):
     """Build a GRPO-ready dataset with `prompt` and `ground_truth` columns."""
@@ -130,9 +175,8 @@ def format_reward(completions: List[str], **_) -> List[float]:
 
 def main() -> None:
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-
-    train_ds = build_dataset(tokenizer, split="train", n=512)
-    eval_ds = build_dataset(tokenizer, split="test", n=64)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
     use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
 
@@ -148,6 +192,38 @@ def main() -> None:
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
     )
 
+    # SFT warm-up: teach the tag format before RL so GRPO groups have non-zero
+    # format reward and denser correctness signal from the start.
+    sft_train_ds = build_sft_dataset(split="train", n=512)
+    sft_config = SFTConfig(
+        output_dir=f"{OUTPUT_DIR}/sft",
+        learning_rate=2e-5,
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=8,
+        gradient_checkpointing=True,
+        max_length=512,
+        num_train_epochs=1,
+        logging_steps=5,
+        save_strategy="no",
+        eval_strategy="no",
+        bf16=use_bf16,
+        fp16=not use_bf16 and torch.cuda.is_available(),
+        report_to=[],
+        seed=42,
+    )
+    sft_trainer = SFTTrainer(
+        model=MODEL_NAME,
+        args=sft_config,
+        train_dataset=sft_train_ds,
+        processing_class=tokenizer,
+        peft_config=peft_config,
+    )
+    sft_trainer.train()
+    policy_model = sft_trainer.model
+
+    train_ds = build_dataset(tokenizer, split="train", n=512)
+    eval_ds = build_dataset(tokenizer, split="test", n=64)
+
     # generation_batch_size = per_device_train_batch_size * num_processes
     #                         * steps_per_generation (== grad-accum by default).
     # It must be divisible by num_generations and contain full prompt groups.
@@ -157,9 +233,9 @@ def main() -> None:
         learning_rate=1e-5,
         per_device_train_batch_size=1,
         per_device_eval_batch_size=4,
-        gradient_accumulation_steps=4,
+        gradient_accumulation_steps=8,
         gradient_checkpointing=True,
-        num_generations=4,
+        num_generations=8,
         max_completion_length=256,
         temperature=0.9,
         beta=0.0,
@@ -176,13 +252,12 @@ def main() -> None:
     )
 
     trainer = GRPOTrainer(
-        model=MODEL_NAME,
+        model=policy_model,
         reward_funcs=[correctness_reward, format_reward],
         args=config,
         train_dataset=train_ds,
         eval_dataset=eval_ds,
         processing_class=tokenizer,
-        peft_config=peft_config,
     )
 
     trainer.train()
