@@ -265,7 +265,7 @@ def main() -> None:
     # Here: 1 * 1 * 4 = 4, divisible by num_generations=4 -> 1 group / gen step.
     config = GRPOConfig(
         output_dir=OUTPUT_DIR,
-        learning_rate=1e-5,
+        learning_rate=1e-3,
         per_device_train_batch_size=1,
         per_device_eval_batch_size=4,
         gradient_accumulation_steps=4,
