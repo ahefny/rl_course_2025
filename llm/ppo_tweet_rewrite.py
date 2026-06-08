@@ -1,12 +1,12 @@
-"""Fine-tune SmolLM to rewrite tweets with PPO (TRL).
+"""Fine-tune Qwen2.5 to rewrite tweets with PPO (TRL).
 
-Standalone script. The policy (SmolLM) is trained to rewrite tweets so that a
+Standalone script. The policy (Qwen2.5) is trained to rewrite tweets so that a
 TweetEval RoBERTa classifier ("cardiffnlp/twitter-roberta-base-{TASK}") assigns
 more (or less) of the target attribute to the rewritten tweet.
 
 TRL 1.0.0 ships an on-policy ``PPOTrainer`` (``trl.experimental.ppo``) that feeds
 the *policy's* token ids straight into the reward model. The requested reward
-model uses a different tokenizer/vocab and head than SmolLM, so we wrap it in
+model uses a different tokenizer/vocab and head than the policy, so we wrap it in
 ``TweetRewardModel``: it decodes the policy tokens, extracts the rewritten tweet,
 runs the RoBERTa classifier, and returns a scalar reward in the [batch, seq, 1]
 shape that TRL's ``get_reward`` expects.
@@ -18,6 +18,7 @@ import types
 import torch
 import torch.nn as nn
 from datasets import load_dataset
+from peft import LoraConfig
 from transformers import (
     AutoModelForCausalLM,
     AutoModelForSequenceClassification,
@@ -29,14 +30,21 @@ from trl.experimental.ppo import PPOConfig, PPOTrainer
 # Configuration
 # --------------------------------------------------------------------------- #
 
-# One of: "emoji", "emotion", "hate", "irony", "offensive", "sentiment".
-TASK = "sentiment"
+# One of: "emotion:{anger,joy,sadness,optimism}", "hate", "irony", "offensive", "sentiment".
+# For "emotion", the subtask is the emotion name.
+METRIC = "emotion:joy"
+
+def _resolve_task_name(task: str) -> str:
+    if ":" in task:
+        return task.split(":")
+    return task, task
+TASK, SUBTASK = _resolve_task_name(METRIC)
 
 # True  -> rewrite tweets to show MORE of the attribute (maximize target class).
 # False -> rewrite tweets to show LESS of the attribute (minimize target class).
 PREFER_MORE = True
 
-POLICY_MODEL = "HuggingFaceTB/SmolLM-135M-Instruct"
+POLICY_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 REWARD_MODEL = f"cardiffnlp/twitter-roberta-base-{TASK}"
 
 MAX_PROMPT_LENGTH = 128
@@ -44,21 +52,22 @@ NUM_TRAIN_SAMPLES = 4000
 NUM_EVAL_SAMPLES = 64
 OUTPUT_DIR = f"./ppo_tweet_rewrite_{TASK}"
 
+# Secondary reward: Jaccard token overlap between the original and rewritten
+# tweet, added to the classifier reward to discourage the policy from drifting
+# away from the source content. Set to 0.0 to disable.
+JACCARD_COEF = 0.5
+
 # Maps a task to the classifier label that represents "more of the attribute".
 # Matching is case-insensitive and substring based; if no label matches we fall
 # back to the last label index (which is the positive/present class for the
 # cardiffnlp binary and sentiment models).
-TARGET_LABEL = {
-    "sentiment": "positive",
-    "emotion": "joy",
-    "hate": "hate",
-    "irony": "irony",
-    "offensive": "offensive",
-}
 
 _MORE = "more" if PREFER_MORE else "less"
-SYSTEM_PROMPT = f"You are a system to rewrite existing tweets to show {_MORE} of {TASK}"
+SYSTEM_PROMPT = f"""
+You are a writing assistant to help a user rewrite existing tweets to show {_MORE} of {SUBTASK}.
 
+**ONLY** output the rewritten tweet. Do **NOT** include any other text or explanation.
+"""
 
 # --------------------------------------------------------------------------- #
 # Reward model wrapper
@@ -93,23 +102,45 @@ class _RewardBackbone(nn.Module):
         self.policy_tokenizer = policy_tokenizer
         self.target_index = target_index
         self.assistant_marker = "<|im_start|>assistant"
+        self.tweet_marker = "Tweet:"
         self._special_re = re.compile(r"<\|[^>]*\|>")
 
-    def _extract_response(self, ids: torch.Tensor) -> str:
+    def _clean(self, text: str) -> str:
+        return self._special_re.sub(" ", text).strip()
+
+    def _split(self, ids: torch.Tensor) -> tuple[str, str]:
+        """Return (original_tweet, rewritten_tweet) decoded from a sequence.
+
+        The full sequence is ``<prompt> <|im_start|>assistant <response>``. The
+        original tweet sits in the prompt after the ``Tweet:`` marker, and the
+        rewrite is everything after the assistant marker.
+        """
         text = self.policy_tokenizer.decode(ids, skip_special_tokens=False)
-        if self.assistant_marker in text:
-            text = text.split(self.assistant_marker)[-1]
-        text = self._special_re.sub(" ", text)
-        return text.strip()
+        parts = text.split(self.assistant_marker)
+        prompt_part, response_part = parts[0], parts[-1]
+        if self.tweet_marker in prompt_part:
+            original = prompt_part.split(self.tweet_marker)[-1]
+        else:
+            original = prompt_part
+        return self._clean(original), self._clean(response_part)
+
+    @staticmethod
+    def _jaccard(a: str, b: str) -> float:
+        set_a, set_b = set(a.lower().split()), set(b.lower().split())
+        union = set_a | set_b
+        if not union:
+            return 1.0
+        return len(set_a & set_b) / len(union)
 
     @torch.no_grad()
     def forward(self, input_ids, attention_mask=None, **kwargs):
         device = input_ids.device
-        texts = [self._extract_response(row) for row in input_ids]
-        texts = [_preprocess_tweet(t) if t else "." for t in texts]
+        pairs = [self._split(row) for row in input_ids]
+        rewrites = [r for _, r in pairs]
+        clf_texts = [_preprocess_tweet(r) if r else "." for r in rewrites]
 
         enc = self.clf_tokenizer(
-            texts,
+            clf_texts,
             return_tensors="pt",
             padding=True,
             truncation=True,
@@ -118,7 +149,14 @@ class _RewardBackbone(nn.Module):
         logits = self.classifier(**enc).logits
         probs = torch.softmax(logits.float(), dim=-1)
         target = probs[:, self.target_index]
-        reward = target if PREFER_MORE else 1.0 - target
+        clf_reward = target if PREFER_MORE else 1.0 - target
+
+        jaccard = torch.tensor(
+            [self._jaccard(original, rewrite) for original, rewrite in pairs],
+            device=clf_reward.device,
+            dtype=clf_reward.dtype,
+        )
+        reward = clf_reward + JACCARD_COEF * jaccard
 
         seq_len = input_ids.shape[1]
         hidden = reward.to(device).view(-1, 1, 1).expand(-1, seq_len, 1)
@@ -140,12 +178,8 @@ class TweetRewardModel(nn.Module):
 
 def _resolve_target_index(config) -> int:
     label2id = {str(k).lower(): v for k, v in (config.label2id or {}).items()}
-    wanted = TARGET_LABEL.get(TASK)
-    if wanted is not None:
-        for name, idx in label2id.items():
-            if wanted in name:
-                return int(idx)
-    return config.num_labels - 1
+    wanted = SUBTASK
+    return label2id[wanted]
 
 
 # --------------------------------------------------------------------------- #
@@ -159,7 +193,12 @@ def build_dataset(tokenizer):
     def to_prompt(example):
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Rewrite the following tweet:\n\n{example['text']}"},
+            {"role": "user", "content": f"""
+            Rewrite the following tweet to show {_MORE} of {SUBTASK}.
+            **ONLY** output the rewritten tweet. Do **NOT** include any other text or explanation.
+
+
+            Tweet: {example['text']}"""},
         ]
         input_ids = tokenizer.apply_chat_template(
             messages, add_generation_prompt=True, tokenize=True, return_dict=False
@@ -185,11 +224,26 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token
 
     policy = AutoModelForCausalLM.from_pretrained(POLICY_MODEL, dtype=dtype)
-    ref_policy = AutoModelForCausalLM.from_pretrained(POLICY_MODEL, dtype=dtype)
+
+    # LoRA on the policy keeps optimizer state tiny; with PEFT the trainer reuses
+    # the (adapter-disabled) policy as its own reference model, so no separate
+    # ref model is loaded.
+    peft_config = LoraConfig(
+        task_type="CAUSAL_LM",
+        r=16,
+        lora_alpha=32,
+        lora_dropout=0.05,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    )
+
+    # Lightweight critic: freeze the value backbone and train only the scalar
+    # value head ("score"). This avoids a second full set of optimizer states.
     value_model = AutoModelForSequenceClassification.from_pretrained(
         POLICY_MODEL, num_labels=1, dtype=dtype
     )
     value_model.config.pad_token_id = tokenizer.pad_token_id
+    for name, param in value_model.named_parameters():
+        param.requires_grad = "score" in name
 
     classifier = AutoModelForSequenceClassification.from_pretrained(REWARD_MODEL)
     classifier.eval()
@@ -202,31 +256,29 @@ def main():
     reward_model = TweetRewardModel(classifier, clf_tokenizer, tokenizer, target_index)
 
     dataset = build_dataset(tokenizer)
-    train_dataset = dataset.select(range(min(NUM_TRAIN_SAMPLES, len(dataset))))
-    eval_dataset = dataset.select(
-        range(
-            min(NUM_TRAIN_SAMPLES, len(dataset)),
-            min(NUM_TRAIN_SAMPLES + NUM_EVAL_SAMPLES, len(dataset)),
-        )
-    )
+    n = len(dataset)
+    n_eval = min(NUM_EVAL_SAMPLES, n)
+    n_train = min(NUM_TRAIN_SAMPLES, n - n_eval)
+    eval_dataset = dataset.select(range(n - n_eval, n))
+    train_dataset = dataset.select(range(n_train))
 
     config = PPOConfig(
         output_dir=OUTPUT_DIR,
-        learning_rate=1e-5,
-        per_device_train_batch_size=8,
-        per_device_eval_batch_size=8,
+        learning_rate=1e-4,
+        per_device_train_batch_size=4,
+        per_device_eval_batch_size=4,
         gradient_accumulation_steps=4,
-        local_rollout_forward_batch_size=8,
+        local_rollout_forward_batch_size=4,
         num_mini_batches=1,
         num_ppo_epochs=4,
         total_episodes=NUM_TRAIN_SAMPLES,
         response_length=64,
         temperature=0.7,
         kl_coef=0.05,
-        missing_eos_penalty=1.0,
+        missing_eos_penalty=0.0,
         stop_token="eos",
-        gradient_checkpointing=True,
-        num_sample_generations=10,
+        gradient_checkpointing=False,
+        num_sample_generations=100,
         logging_steps=1,
         bf16=use_cuda,
         report_to="none",
@@ -236,11 +288,12 @@ def main():
         args=config,
         processing_class=tokenizer,
         model=policy,
-        ref_model=ref_policy,
+        ref_model=None,
         reward_model=reward_model,
         value_model=value_model,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
+        peft_config=peft_config,
     )
 
     trainer.train()
