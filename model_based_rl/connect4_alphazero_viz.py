@@ -44,20 +44,25 @@ MAX_COLS = 12  # pre-created Gradio columns; extras stay hidden
 
 def load_model(path: str, device: torch.device) -> Tuple[AlphaZeroNet, dict]:
     ckpt = torch.load(path, map_location=device, weights_only=False)
-    args = ckpt.get("args", {})
+    args = ckpt["args"]
     rows = int(args.get("rows", 6))
     cols = int(args.get("cols", 7))
     connect = int(args.get("connect", 4))
-    channels = int(args.get("channels", 64))
-    blocks = int(args.get("blocks", 4))
-    net = AlphaZeroNet(rows, cols, channels, blocks).to(device)
+    hidden_dim = int(args["hidden_dim"])
+    blocks = int(args["blocks"])
+    net = AlphaZeroNet(
+        rows=rows,
+        cols=cols,
+        hidden_dim=hidden_dim,
+        blocks=blocks,
+    ).to(device)
     net.load_state_dict(ckpt["model"])
     net.eval()
     meta = {
         "rows": rows,
         "cols": cols,
         "connect": connect,
-        "channels": channels,
+        "hidden_dim": hidden_dim,
         "blocks": blocks,
         "iteration": ckpt.get("iteration"),
         "path": path,
@@ -270,7 +275,7 @@ def build_ui(net: AlphaZeroNet, meta: dict, device: torch.device) -> gr.Blocks:
             f"# Connect-4 · AlphaZero inspector\n"
             f"Model: `{meta['path']}`{iter_note}  \n"
             f"Board **{rows}×{cols}**, connect-{connect}, "
-            f"net channels={meta['channels']} blocks={meta['blocks']}.  \n"
+            f"net hidden_dim={meta['hidden_dim']} blocks={meta['blocks']}.  \n"
             "Play **both** sides. Under each column: **π** = policy probability "
             "for that action from the current state; **v** = learned value of "
             "the resulting state (from the *then*-to-play player's view)."

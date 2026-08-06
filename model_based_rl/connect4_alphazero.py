@@ -10,7 +10,7 @@ Reuse of game rules:
 
 Run a quick sanity check (CPU/GPU, ~1 min):
     python model_based_rl/connect4_alphazero.py --iters 3 --games 4 --sims 32 \\
-        --train-steps 50 --batch-size 64 --channels 32 --blocks 2
+        --train-steps 50 --batch-size 64 --hidden-dim 512 --blocks 4
 
 Fuller training (GPU recommended):
     python model_based_rl/connect4_alphazero.py --iters 50 --games 25 --sims 100
@@ -58,13 +58,13 @@ from connect4_mcts import P1, P2, Connect4State  # noqa: E402
 
 
 def encode_state(state: Connect4State) -> np.ndarray:
-    """Return a float32 array of shape (2, rows, cols)."""
+    """Return a float32 array of size 2 * rows * cols."""
     me = state.to_play
     opp = P1 if me == P2 else P2
     planes = np.zeros((2, state.rows, state.cols), dtype=np.float32)
     planes[0] = state.board == me
     planes[1] = state.board == opp
-    return planes
+    return planes.flatten()
 
 
 def outcome_for(state: Connect4State, player: int) -> float:
@@ -80,61 +80,48 @@ def outcome_for(state: Connect4State, player: int) -> float:
 
 
 class ResidualBlock(nn.Module):
-    def __init__(self, channels: int):
+    def __init__(self, hidden_dim: int):
         super().__init__()
-        self.conv1 = nn.Conv2d(channels, channels, 3, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(channels)
-        self.conv2 = nn.Conv2d(channels, channels, 3, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(channels)
+        self.mlp = nn.Sequential(
+            nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
+
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h = F.relu(self.bn1(self.conv1(x)))
-        h = self.bn2(self.conv2(h))
-        return F.relu(x + h)
+        return F.relu(x + self.mlp(x))
 
 
 class AlphaZeroNet(nn.Module):
     """Small residual tower with a policy head (over columns) and a value head."""
 
-    def __init__(self, rows: int = 6, cols: int = 7, channels: int = 64,
-                 blocks: int = 4):
+    def __init__(self, rows: int = 6, cols: int = 7, hidden_dim: int = 512, blocks: int = 4):
         super().__init__()
         self.rows = rows
         self.cols = cols
-        self.stem = nn.Sequential(
-            nn.Conv2d(2, channels, 3, padding=1, bias=False),
-            nn.BatchNorm2d(channels),
-            nn.ReLU(inplace=True),
-        )
-        self.tower = nn.Sequential(*[ResidualBlock(channels) for _ in range(blocks)])
+        self._input_dim = 2 * rows * cols
+        self._hidden_dim = hidden_dim
+        self._blocks = blocks
 
-        # Policy head: one logit per column.
-        self.policy_conv = nn.Sequential(
-            nn.Conv2d(channels, 2, 1, bias=False),
-            nn.BatchNorm2d(2),
-            nn.ReLU(inplace=True),
-        )
-        self.policy_fc = nn.Linear(2 * rows * cols, cols)
+        self.projection = nn.Linear(self._input_dim, self._hidden_dim)
+        self.blocks = nn.Sequential(*[ResidualBlock(self._hidden_dim) for _ in range(self._blocks)])
 
-        # Value head: scalar in [-1, 1].
-        self.value_conv = nn.Sequential(
-            nn.Conv2d(channels, 1, 1, bias=False),
-            nn.BatchNorm2d(1),
-            nn.ReLU(inplace=True),
+        self.policy_head = nn.Sequential(
+            nn.Linear(self._hidden_dim, self.cols),
         )
-        self.value_fc = nn.Sequential(
-            nn.Linear(rows * cols, channels),
-            nn.ReLU(inplace=True),
-            nn.Linear(channels, 1),
+        self.value_head = nn.Sequential(
+            nn.Linear(self._hidden_dim, 1),
             nn.Tanh(),
         )
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Return (policy_logits [B, cols], value [B])."""
-        h = self.tower(self.stem(x))
-        p = self.policy_fc(self.policy_conv(h).flatten(1))
-        v = self.value_fc(self.value_conv(h).flatten(1)).squeeze(-1)
-        return p, v
+        h = self.projection(x)
+        h = self.blocks(h)
+        policy = self.policy_head(h)
+        value = self.value_head(h)
+        return policy, value.squeeze(-1)
 
 
 @torch.no_grad()
@@ -410,8 +397,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--rows", type=int, default=6)
     p.add_argument("--cols", type=int, default=7)
     p.add_argument("--connect", type=int, default=4)
-    p.add_argument("--channels", type=int, default=64)
     p.add_argument("--blocks", type=int, default=4)
+    p.add_argument("--hidden-dim", type=int, default=512)
     p.add_argument("--iters", type=int, default=30,
                    help="Outer training iterations (self-play + update)")
     p.add_argument("--games", type=int, default=20,
@@ -451,7 +438,12 @@ def main() -> None:
     print(f"device={device}  board={args.rows}x{args.cols}  "
           f"sims={args.sims}  games/iter={args.games}")
 
-    net = AlphaZeroNet(args.rows, args.cols, args.channels, args.blocks).to(device)
+    net = AlphaZeroNet(
+        rows=args.rows,
+        cols=args.cols,
+        hidden_dim=args.hidden_dim,
+        blocks=args.blocks,
+    ).to(device)
     opt = AdamW(net.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     buf = ReplayBuffer(args.buffer)
     start_iter = 1
