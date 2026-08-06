@@ -167,10 +167,18 @@ class Node:
 
 
 def mcts_search(root_state: Connect4State, n_iter: int, C: float,
-                seed: Optional[int] = None) -> Node:
-    """Run `n_iter` UCT simulations from `root_state`; return the root node."""
+                seed: Optional[int] = None, root: Optional[Node] = None) -> Node:
+    """Run `n_iter` UCT simulations from `root_state`; return the root node.
+
+    If `root` is given (tree reuse), it is re-rooted (its parent link cut) and
+    the new simulations are added on top of its existing statistics; otherwise a
+    fresh 0-visit tree is created.
+    """
     rng = random.Random(seed)
-    root = Node(state=root_state)
+    if root is None:
+        root = Node(state=root_state)
+    else:
+        root.parent = None  # re-root: detach from the previous turn's tree
 
     for _ in range(n_iter):
         node = root
@@ -204,6 +212,18 @@ def mcts_search(root_state: Connect4State, n_iter: int, C: float,
 def best_move(root: Node) -> int:
     """Robust choice: the most-visited child."""
     return max(root.children, key=lambda ch: ch.visits).move
+
+
+def child_by_move(node: Node, move: int) -> Optional[Node]:
+    """The child reached by playing `move`, or None if it was never expanded."""
+    for ch in node.children:
+        if ch.move == move:
+            return ch
+    return None
+
+
+def count_nodes(node: Node) -> int:
+    return 1 + sum(count_nodes(ch) for ch in node.children)
 
 
 # ===========================================================================
@@ -299,16 +319,22 @@ MAX_ROWS, MAX_COLS = 12, 12  # slider caps == number of pre-created column butto
 
 
 # -- session helpers --------------------------------------------------------
-def computer_think(sess: dict, n_iter: int, C: float) -> None:
-    """Run MCTS for the computer, store the tree, and play the chosen move."""
+def computer_think(sess: dict, n_iter: int, C: float,
+                   reuse_root: Optional[Node] = None) -> None:
+    """Run MCTS for the computer, store the tree, and play the chosen move.
+
+    If `reuse_root` is given it is used as a warm start (its stats are kept and
+    `n_iter` new simulations are added on top).
+    """
     state: Connect4State = sess["state"]
     if state.is_terminal():
         return
     root_state = state.clone()
-    root = mcts_search(root_state, int(n_iter), float(C))
+    root = mcts_search(root_state, int(n_iter), float(C), root=reuse_root)
     move = best_move(root)
     sess["root"] = root
     sess["root_state"] = root_state
+    sess["last_computer_move"] = move
     state.do_move(move)
 
 
@@ -355,16 +381,23 @@ def render_tree_html(sess: dict, depth: int, top_k: int) -> str:
     if not root:
         return ('<div style="padding:24px;color:#888;">The search tree appears '
                 "here after the computer's first move.</div>")
+    caption = (
+        f'<div style="color:#555;font-size:13px;margin-bottom:6px;">'
+        f"Full tree: <b>{count_nodes(root)}</b> nodes, root visits "
+        f"<b>N={root.visits}</b> "
+        f'<span style="color:#999;">(exceeds the budget when tree reuse is on)</span>'
+        f"</div>"
+    )
     try:
         dot = build_tree_graph(root, sess["root_state"], int(depth), int(top_k))
         svg = dot.pipe(format="svg").decode("utf-8")
     except Exception as e:  # dot binary missing, etc.
-        return (
+        return caption + (
             '<div style="color:#c0392b;padding:16px;">Could not render the tree: '
             f"<code>{e}</code><br>If the Graphviz binary is missing, install it with "
             "<code>sudo apt install graphviz</code>.</div>"
         )
-    return (
+    return caption + (
         '<div style="overflow:auto;max-height:640px;border:1px solid #e0e0e0;'
         f'border-radius:8px;padding:8px;background:white;">{svg}</div>'
     )
@@ -407,13 +440,22 @@ def on_new_game(rows, cols, connect, n_iter, C, human_first, depth, top_k):
     return render_all(sess, depth, top_k)
 
 
-def on_drop(col, sess, n_iter, C, depth, top_k):
+def on_drop(col, sess, n_iter, C, depth, top_k, reuse):
     state = sess["state"]
     if state.is_terminal() or col not in state.get_moves():
         return render_all(sess, depth, top_k)
+
+    # Find the warm-start subtree BEFORE mutating: descend last turn's tree by
+    # [computer's last move, human's move (col)]. Missing links => fresh search.
+    reuse_root = None
+    if reuse and sess.get("root") is not None and "last_computer_move" in sess:
+        after_computer = child_by_move(sess["root"], sess["last_computer_move"])
+        if after_computer is not None:
+            reuse_root = child_by_move(after_computer, col)
+
     state.do_move(col)  # human move
     if not state.is_terminal():
-        computer_think(sess, n_iter, C)  # computer replies
+        computer_think(sess, n_iter, C, reuse_root=reuse_root)  # computer replies
     return render_all(sess, depth, top_k)
 
 
@@ -447,6 +489,10 @@ def build_ui() -> "gr.Blocks":
                                    label="Thinking budget N (simulations)")
                 C = gr.Slider(0.0, 3.0, value=1.41, step=0.01,
                               label="Exploration constant C")
+                reuse = gr.Checkbox(
+                    value=False,
+                    label="Reuse tree across turns (warm start)",
+                )
 
                 gr.Markdown("### Tree view")
                 depth = gr.Slider(1, 6, value=3, step=1, label="Max display depth")
@@ -489,7 +535,7 @@ def build_ui() -> "gr.Blocks":
         for c, btn in enumerate(col_buttons):
             btn.click(
                 partial(on_drop, c),
-                inputs=[sess_state, n_iter, C, depth, top_k],
+                inputs=[sess_state, n_iter, C, depth, top_k, reuse],
                 outputs=outputs,
             )
         for view_ctrl in (depth, top_k):
