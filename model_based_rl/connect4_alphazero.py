@@ -44,7 +44,7 @@ from torch.optim import AdamW
 # Allow `python model_based_rl/connect4_alphazero.py` from the repo root.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from connect4_mcts import P1, P2, Connect4State  # noqa: E402
+from connect4_mcts import P1, P2, Connect4State, best_move, mcts_search  # noqa: E402
 
 
 # ===========================================================================
@@ -381,6 +381,35 @@ def evaluate_vs_random(net: AlphaZeroNet, device: torch.device,
     return wins / n_games
 
 
+@torch.no_grad()
+def evaluate_vs_pure_mcts(net: AlphaZeroNet, device: torch.device,
+                          rows: int, cols: int, connect: int,
+                          n_games: int = 20, net_sims: int = 100,
+                          opp_sims: int = 400, opp_C: float = 1.41) -> float:
+    """Win-rate of AZ-MCTS(net) vs classic UCT-MCTS with random rollouts.
+
+    Colors alternate each game. Draws count as non-wins in the returned ratio.
+    """
+    az = AZMCTS(net, device, n_sims=net_sims, dirichlet_eps=0.0)
+    wins = 0
+    for g in range(n_games):
+        state = Connect4State(rows, cols, connect)
+        net_is_p1 = (g % 2 == 0)
+        while not state.is_terminal():
+            if (state.to_play == P1) == net_is_p1:
+                policy, _ = az.run(state, add_noise=False)
+                state.do_move(int(np.argmax(policy)))
+            else:
+                root = mcts_search(state, opp_sims, opp_C)
+                state.do_move(best_move(root))
+        if state.winner == 0:
+            continue
+        net_player = P1 if net_is_p1 else P2
+        if state.winner == net_player:
+            wins += 1
+    return wins / n_games
+
+
 def save_checkpoint(path: str, net: AlphaZeroNet, opt: torch.optim.Optimizer,
                     iteration: int, args: argparse.Namespace) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -418,6 +447,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--weight-decay", type=float, default=1e-4)
     p.add_argument("--eval-every", type=int, default=5)
     p.add_argument("--eval-games", type=int, default=20)
+    p.add_argument("--eval-mcts-sims", type=int, default=400,
+                   help="Pure UCT-MCTS simulations per move for the eval opponent")
     p.add_argument("--device", type=str,
                    default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--seed", type=int, default=0)
@@ -491,6 +522,18 @@ def main() -> None:
                 n_games=args.eval_games, sims=max(32, args.sims // 2),
             )
             print(f"  eval vs random: win_rate={wr:.2f} over {args.eval_games} games")
+            t_eval = time.time()
+            wr_mcts = evaluate_vs_pure_mcts(
+                net, device, args.rows, args.cols, args.connect,
+                n_games=args.eval_games,
+                net_sims=args.sims,
+                opp_sims=args.eval_mcts_sims,
+            )
+            print(
+                f"  eval vs pure MCTS ({args.eval_mcts_sims} sims): "
+                f"win_rate={wr_mcts:.2f} over {args.eval_games} games "
+                f"({time.time() - t_eval:.1f}s)"
+            )
             save_checkpoint(args.checkpoint, net, opt, it, args)
             print(f"  saved {args.checkpoint}")
 
