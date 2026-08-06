@@ -142,7 +142,19 @@ def _fmt_value(v: Optional[float]) -> str:
 
 def render_col_stats_html(policy: np.ndarray, values: List[Optional[float]],
                           cols: int, legal: set) -> List[str]:
-    """One HTML snippet per Gradio column slot (including hidden extras)."""
+    """One HTML snippet per Gradio column slot (including hidden extras).
+
+    Policy-best (max π) is highlighted in blue. If the value-best action
+    differs — lowest successor v, since v is from the opponent's view — it is
+    highlighted in light gray.
+    """
+    best_pi = max(legal, key=lambda i: float(policy[i])) if legal else None
+    # Preferred for the current player = worst for the opponent = min v(s').
+    best_v = (
+        min(legal, key=lambda i: float(values[i]))  # type: ignore[arg-type]
+        if legal else None
+    )
+
     out = []
     for c in range(MAX_COLS):
         if c >= cols:
@@ -156,11 +168,15 @@ def render_col_stats_html(policy: np.ndarray, values: List[Optional[float]],
             )
             continue
         pi = float(policy[c]) * 100.0
-        best = max(legal, key=lambda i: float(policy[i])) if legal else None
-        bold = ("font-weight:700;color:#1a5276;" if c == best else "color:#333;")
+        if c == best_pi:
+            style = "font-weight:700;color:#1a5276;"  # policy-best
+        elif c == best_v and best_v != best_pi:
+            style = "font-weight:700;color:#a0a0a0;"  # value-best (disagree)
+        else:
+            style = "color:#333;"
         out.append(
             f'<div style="text-align:center;font-size:12px;font-family:monospace;'
-            f'line-height:1.45;{bold}">'
+            f'line-height:1.45;{style}">'
             f'π {pi:5.1f}%<br>v {_fmt_value(values[c])}</div>'
         )
     return out
@@ -268,7 +284,11 @@ def build_ui(net: AlphaZeroNet, meta: dict, device: torch.device) -> gr.Blocks:
                     "- 🔴 = Player 1 &nbsp; 🟡 = Player 2\n"
                     "- **V(s)** above the board is the value for whoever is to move\n"
                     "- **v** under a column is V(s′) after dropping there\n"
-                    "- Highlighted **π** is the network's top action"
+                    "- <span style='color:#1a5276;font-weight:700'>Blue</span> "
+                    "= best action by **π**\n"
+                    "- <span style='color:#a0a0a0;font-weight:700'>Gray</span> "
+                    "= best action by **v** alone (lowest successor v), shown only "
+                    "when it differs from π"
                 )
                 new_game_btn = gr.Button("New game", variant="primary")
 
