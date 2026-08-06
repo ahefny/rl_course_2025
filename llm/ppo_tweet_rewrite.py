@@ -169,17 +169,24 @@ def main():
         f"target_label='{classifier.config.id2label[target_index]}' (idx={target_index})"
     )
 
-    def attribute_reward(completions, **kwargs):
-        """Classifier probability of the target attribute for each rewrite."""
-        texts = [_preprocess_tweet(_completion_text(c)) or "." for c in completions]
+    def _attribute_scores(texts):
+        """Directional attribute reward (target prob, flipped when not PREFER_MORE)."""
+        clean = [_preprocess_tweet(t) or "." for t in texts]
         enc = clf_tokenizer(
-            texts, return_tensors="pt", padding=True, truncation=True, max_length=128
+            clean, return_tensors="pt", padding=True, truncation=True, max_length=128
         ).to(classifier.device)
         with torch.no_grad():
             probs = torch.softmax(classifier(**enc).logits.float(), dim=-1)
         target = probs[:, target_index]
-        reward = target if PREFER_MORE else 1.0 - target
-        return reward.tolist()
+        return target if PREFER_MORE else 1.0 - target
+
+    def attribute_reward(completions, **kwargs):
+        """Classifier attribute score of each rewrite (the optimized reward)."""
+        return _attribute_scores([_completion_text(c) for c in completions]).tolist()
+
+    def original_attribute_reward(tweet, **kwargs):
+        """Attribute score of the *original* tweet. Weight 0 (display/baseline only)."""
+        return _attribute_scores(tweet).tolist()
 
     def jaccard_reward(completions, tweet, **kwargs):
         """Token overlap between the original tweet and the rewrite."""
@@ -198,7 +205,7 @@ def main():
         temperature=1.0,
         beta=0.0,
         num_train_epochs=1,
-        reward_weights=[1.0, JACCARD_COEF],
+        reward_weights=[0.0, 1.0, JACCARD_COEF],
         remove_unused_columns=False,  # keep "tweet" so reward funcs can read it
         gradient_checkpointing=False,
         logging_steps=1,
@@ -210,7 +217,7 @@ def main():
 
     trainer = GRPOTrainer(
         model=policy,
-        reward_funcs=[attribute_reward, jaccard_reward],
+        reward_funcs=[original_attribute_reward, attribute_reward, jaccard_reward],
         args=config,
         train_dataset=train_dataset,
         processing_class=tokenizer,
