@@ -5,11 +5,12 @@ Graphviz; every node shows the board state it represents plus its visit
 count and value estimate.
 
 Run:
-    python connect4_mcts.py
+    python model_based_rl/connect4_mcts.py
+    Open the browser to http://localhost:7860/
 
 Requirements:
-    pip install gradio graphviz          # Python packages
-    sudo apt install graphviz            # the `dot` binary used to render the tree
+    pip install -r model_based_rl/requirements.txt     # Python packages
+    sudo apt install graphviz           # the `dot` binary used to render the tree
 
 Layout of this file:
     1. Core game logic      -- Connect4State            (no UI / no MCTS deps)
