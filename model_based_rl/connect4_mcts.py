@@ -236,7 +236,18 @@ def count_nodes(node: Node) -> int:
 # level, to the top-k most-visited children.
 
 _DISC_COLORS = {EMPTY: "#ffffff", P1: "#e74c3c", P2: "#f1c40f"}
+# Shades used to highlight the tile placed by the move leading to a node:
+# a darker red and a more saturated yellow.
+_LAST_DISC_COLORS = {P1: "#ff0000", P2: "#ffff00"}
 _EDGE_COLORS = {P1: "#e74c3c", P2: "#d4ac0d"}
+
+
+def _cell_color(state: Connect4State, r: int, c: int) -> str:
+    """Disc color for (r, c); the tile just placed gets a lighter highlight shade."""
+    v = int(state.board[r, c])
+    if v != EMPTY and state.last_move == (r, c):
+        return _LAST_DISC_COLORS[v]
+    return _DISC_COLORS[v]
 
 
 def _board_table_html(state: Connect4State) -> str:
@@ -244,7 +255,7 @@ def _board_table_html(state: Connect4State) -> str:
     rows_html = []
     for r in range(state.rows):
         cells = "".join(
-            f'<TD BGCOLOR="{_DISC_COLORS[int(state.board[r, c])]}" '
+            f'<TD BGCOLOR="{_cell_color(state, r, c)}" '
             f'WIDTH="11" HEIGHT="11" FIXEDSIZE="TRUE"> </TD>'
             for c in range(state.cols)
         )
