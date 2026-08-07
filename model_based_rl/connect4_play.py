@@ -37,7 +37,12 @@ import torch
 # Allow `python model_based_rl/connect4_play.py` from the repo root.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from connect4_alphazero import AZMCTS, AlphaZeroNet  # noqa: E402
+from connect4_alphazero import (  # noqa: E402
+    AZMCTS,
+    AlphaZeroNet,
+    net_predict,
+    outcome_for,
+)
 from connect4_mcts import (  # noqa: E402
     EMPTY,
     P1,
@@ -108,16 +113,21 @@ def _raw_q(node: Any) -> float:
 
 
 def _state_value(node: Any, is_root: bool) -> float:
-    """Estimated value of `node`'s state from the player-to-move's view.
+    """Estimated value of `node`'s state from the player-to-move's view in [-1, 1].
 
-    Classic UCT stores win-rate in [0, 1] for the player who just moved, so the
-    to-play value is `1 - q`. AlphaZero stores Q in [-1, 1] for the mover into
-    the node; the root's backed-up Q is already in the to-play frame.
+    Classic UCT stores win-rate in [0, 1] for the player who just moved; that is
+    mapped to a to-play value via `1 - 2*q`.
+
+    AlphaZero stores Q in [-1, 1] for the player who moved into the node.
+    Backups flip the sign at every parent — including when updating the root —
+    so the side-to-move value is always `-Q` (the old special case that treated
+    the root as already in the to-play frame was wrong and flipped the sign).
     """
     q = _raw_q(node)
     if CFG.az_mode:
-        return q if is_root else -q
-    return 1.0 - q
+        return -q
+    # q = P(win) for player_just_moved → to-play win-rate is 1-q → [-1, 1].
+    return 1.0 - 2.0 * q
 
 
 def _child_list(node: Any) -> List[Tuple[int, Any]]:
@@ -315,6 +325,57 @@ def status_text(sess: dict) -> str:
     return f"### Your turn ({h_disc}) — pick a column."
 
 
+def _player_emoji(player: int) -> str:
+    return "🔴" if player == P1 else "🟡"
+
+
+def estimate_to_play_value(state: Connect4State,
+                           n_iter: int = 100,
+                           C: float = 1.41) -> float:
+    """Classic UCT state value for the player to move, in [-1, 1]."""
+    if state.is_terminal():
+        return 2.0 * state.get_result(state.to_play) - 1.0
+    root = mcts_search(state.clone(), int(n_iter), float(C))
+    return _state_value(root, is_root=True)
+
+
+def estimate_az_values(state: Connect4State,
+                       n_iter: int = 100,
+                       C: float = 1.5) -> Tuple[float, float]:
+    """Return (network value, AZ-MCTS backed-up value) for the side to move."""
+    assert CFG.net is not None and CFG.device is not None
+    if state.is_terminal():
+        z = outcome_for(state, state.to_play)
+        return z, z
+    _, v_model = net_predict(CFG.net, state, CFG.device)
+    az = AZMCTS(
+        CFG.net, CFG.device,
+        n_sims=int(n_iter),
+        c_puct=float(C),
+        dirichlet_eps=0.0,
+    )
+    _, root = az.run(state.clone(), add_noise=False)
+    v_mcts = _state_value(root, is_root=True)
+    return v_model, v_mcts
+
+
+def state_value_text(sess: Optional[dict], show_value: bool,
+                     n_iter: int = 100, C: float = 1.41) -> str:
+    """Line above the column buttons; empty when the checkbox is off."""
+    if not show_value or not sess:
+        return ""
+    state: Connect4State = sess["state"]
+    emoji = _player_emoji(state.to_play)
+    if CFG.az_mode:
+        v_model, v_mcts = estimate_az_values(state, n_iter=n_iter, C=C)
+        return (
+            f"Value for {emoji} is {v_model:.3f} (value model) , "
+            f"{v_mcts:.3f} (AZ-MCTS)"
+        )
+    value = estimate_to_play_value(state, n_iter=n_iter, C=C)
+    return f"Value for {emoji} is {value:.3f}"
+
+
 def render_tree_html(sess: dict, depth: int, top_k: int) -> str:
     root = sess.get("root")
     if not root:
@@ -324,10 +385,7 @@ def render_tree_html(sess: dict, depth: int, top_k: int) -> str:
         "" if CFG.az_mode else
         ' <span style="color:#999;">(exceeds the budget when tree reuse is on)</span>'
     )
-    value_note = (
-        "V = backed-up state value for the side to move"
-        + (" ([-1, 1])" if CFG.az_mode else " ([0, 1])")
-    )
+    value_note = "V = backed-up state value for the side to move ([-1, 1])"
     caption = (
         f'<div style="color:#555;font-size:13px;margin-bottom:6px;">'
         f"Full tree: <b>{count_tree_nodes(root)}</b> nodes, root visits "
@@ -362,19 +420,22 @@ def button_updates(state: Connect4State):
     return ups
 
 
-def render_all(sess: dict, depth: int, top_k: int):
+def render_all(sess: dict, depth: int, top_k: int, show_value: bool,
+               n_iter: int, C: float):
     state = sess["state"]
     return (
         sess,
         render_board_html(state),
         status_text(sess),
+        state_value_text(sess, show_value, n_iter=n_iter, C=C),
         render_tree_html(sess, depth, top_k),
         *button_updates(state),
     )
 
 
 # -- event handlers ---------------------------------------------------------
-def on_new_game(rows, cols, connect, n_iter, C, human_first, depth, top_k):
+def on_new_game(rows, cols, connect, n_iter, C, human_first, depth, top_k,
+                show_value):
     if CFG.az_mode:
         rows, cols, connect = CFG.rows, CFG.cols, CFG.connect
     state = Connect4State(int(rows), int(cols), int(connect))
@@ -386,13 +447,13 @@ def on_new_game(rows, cols, connect, n_iter, C, human_first, depth, top_k):
     }
     if state.to_play != sess["human"]:  # computer moves first
         computer_think(sess, n_iter, C)
-    return render_all(sess, depth, top_k)
+    return render_all(sess, depth, top_k, show_value, n_iter, C)
 
 
-def on_drop(col, sess, n_iter, C, depth, top_k, reuse):
+def on_drop(col, sess, n_iter, C, depth, top_k, reuse, show_value):
     state = sess["state"]
     if state.is_terminal() or col not in state.get_moves():
-        return render_all(sess, depth, top_k)
+        return render_all(sess, depth, top_k, show_value, n_iter, C)
 
     # Warm-start only for classic UCT trees (AZ always searches from scratch).
     reuse_root = None
@@ -405,13 +466,17 @@ def on_drop(col, sess, n_iter, C, depth, top_k, reuse):
     state.do_move(col)  # human move
     if not state.is_terminal():
         computer_think(sess, n_iter, C, reuse_root=reuse_root)  # computer replies
-    return render_all(sess, depth, top_k)
+    return render_all(sess, depth, top_k, show_value, n_iter, C)
 
 
 def on_view_change(sess, depth, top_k):
     if not sess:
         return gr.update()
     return render_tree_html(sess, depth, top_k)
+
+
+def on_show_value_change(sess, show_value, n_iter, C):
+    return state_value_text(sess, show_value, n_iter=n_iter, C=C)
 
 
 def build_ui() -> "gr.Blocks":
@@ -449,7 +514,7 @@ def build_ui() -> "gr.Blocks":
         n_default = 400
         value_blurb = (
             "Each node shows its board, visit count **N** and estimated state "
-            "value **V** for the side to move ([0, 1]). Edges are labeled with "
+            "value **V** for the side to move ([-1, 1]). Edges are labeled with "
             "the column played; the thick green path is the most-visited "
             "(chosen) line."
         )
@@ -496,6 +561,10 @@ def build_ui() -> "gr.Blocks":
                 depth = gr.Slider(1, 6, value=3, step=1, label="Max display depth")
                 top_k = gr.Slider(1, 7, value=4, step=1,
                                   label="Top-k children per node")
+                show_value = gr.Checkbox(
+                    value=False,
+                    label="Show current-state value (side to move)",
+                )
 
                 new_game_btn = gr.Button("New game", variant="primary")
                 gr.Markdown(
@@ -506,6 +575,7 @@ def build_ui() -> "gr.Blocks":
             # ---- Play column ----
             with gr.Column(scale=2):
                 status = gr.Markdown("### Start a new game.")
+                state_value = gr.Markdown("")
                 col_buttons = []
                 with gr.Row():
                     for c in range(MAX_COLS):
@@ -518,28 +588,35 @@ def build_ui() -> "gr.Blocks":
         gr.Markdown(value_blurb)
         tree = gr.HTML()
 
-        outputs = [sess_state, board, status, tree, *col_buttons]
+        outputs = [sess_state, board, status, state_value, tree, *col_buttons]
 
         # Wire events.
         new_game_btn.click(
             on_new_game,
-            inputs=[rows, cols, connect, n_iter, C, human_first, depth, top_k],
+            inputs=[rows, cols, connect, n_iter, C, human_first, depth, top_k,
+                    show_value],
             outputs=outputs,
         )
         for c, btn in enumerate(col_buttons):
             btn.click(
                 partial(on_drop, c),
-                inputs=[sess_state, n_iter, C, depth, top_k, reuse],
+                inputs=[sess_state, n_iter, C, depth, top_k, reuse, show_value],
                 outputs=outputs,
             )
         for view_ctrl in (depth, top_k):
             view_ctrl.change(on_view_change, inputs=[sess_state, depth, top_k],
                              outputs=tree)
+        show_value.change(
+            on_show_value_change,
+            inputs=[sess_state, show_value, n_iter, C],
+            outputs=state_value,
+        )
 
         # Start a game immediately on load.
         demo.load(
             on_new_game,
-            inputs=[rows, cols, connect, n_iter, C, human_first, depth, top_k],
+            inputs=[rows, cols, connect, n_iter, C, human_first, depth, top_k,
+                    show_value],
             outputs=outputs,
         )
 
