@@ -360,10 +360,10 @@ def train_steps(net: AlphaZeroNet, opt: torch.optim.Optimizer, buf: ReplayBuffer
 @torch.no_grad()
 def evaluate_vs_random(net: AlphaZeroNet, device: torch.device,
                        rows: int, cols: int, connect: int,
-                       n_games: int = 20, sims: int = 50) -> float:
-    """Win-rate of the net (as P1 and P2) against a uniform random opponent."""
+                       n_games: int = 20, sims: int = 50) -> dict:
+    """W/L/D of the net (as P1 and P2) against a uniform random opponent."""
     mcts = AZMCTS(net, device, n_sims=sims, dirichlet_eps=0.0)
-    wins = 0
+    wins = losses = draws = 0
     for g in range(n_games):
         state = Connect4State(rows, cols, connect)
         net_is_p1 = (g % 2 == 0)
@@ -374,24 +374,33 @@ def evaluate_vs_random(net: AlphaZeroNet, device: torch.device,
             else:
                 state.do_move(random.choice(state.get_moves()))
         if state.winner == 0:
+            draws += 1
             continue
         net_player = P1 if net_is_p1 else P2
         if state.winner == net_player:
             wins += 1
-    return wins / n_games
+        else:
+            losses += 1
+    return {
+        "wins": wins,
+        "losses": losses,
+        "draws": draws,
+        "n_games": n_games,
+        "win_rate": wins / n_games,
+    }
 
 
 @torch.no_grad()
 def evaluate_vs_pure_mcts(net: AlphaZeroNet, device: torch.device,
                           rows: int, cols: int, connect: int,
                           n_games: int = 20, net_sims: int = 100,
-                          opp_sims: int = 400, opp_C: float = 1.41) -> float:
-    """Win-rate of AZ-MCTS(net) vs classic UCT-MCTS with random rollouts.
+                          opp_sims: int = 400, opp_C: float = 1.41) -> dict:
+    """W/L/D of AZ-MCTS(net) vs classic UCT-MCTS with random rollouts.
 
-    Colors alternate each game. Draws count as non-wins in the returned ratio.
+    Colors alternate each game. `win_rate` is wins / n_games (draws are not wins).
     """
     az = AZMCTS(net, device, n_sims=net_sims, dirichlet_eps=0.0)
-    wins = 0
+    wins = losses = draws = 0
     for g in range(n_games):
         state = Connect4State(rows, cols, connect)
         net_is_p1 = (g % 2 == 0)
@@ -403,11 +412,20 @@ def evaluate_vs_pure_mcts(net: AlphaZeroNet, device: torch.device,
                 root = mcts_search(state, opp_sims, opp_C)
                 state.do_move(best_move(root))
         if state.winner == 0:
+            draws += 1
             continue
         net_player = P1 if net_is_p1 else P2
         if state.winner == net_player:
             wins += 1
-    return wins / n_games
+        else:
+            losses += 1
+    return {
+        "wins": wins,
+        "losses": losses,
+        "draws": draws,
+        "n_games": n_games,
+        "win_rate": wins / n_games,
+    }
 
 
 def save_checkpoint(path: str, net: AlphaZeroNet, opt: torch.optim.Optimizer,
@@ -517,13 +535,17 @@ def main() -> None:
         )
 
         if it % args.eval_every == 0 or it == args.iters:
-            wr = evaluate_vs_random(
+            ev = evaluate_vs_random(
                 net, device, args.rows, args.cols, args.connect,
                 n_games=args.eval_games, sims=max(32, args.sims // 2),
             )
-            print(f"  eval vs random: win_rate={wr:.2f} over {args.eval_games} games")
+            print(
+                f"  eval vs random: "
+                f"W/L/D={ev['wins']}/{ev['losses']}/{ev['draws']}  "
+                f"win_rate={ev['win_rate']:.2f} over {ev['n_games']} games"
+            )
             t_eval = time.time()
-            wr_mcts = evaluate_vs_pure_mcts(
+            ev_mcts = evaluate_vs_pure_mcts(
                 net, device, args.rows, args.cols, args.connect,
                 n_games=args.eval_games,
                 net_sims=args.sims,
@@ -531,7 +553,8 @@ def main() -> None:
             )
             print(
                 f"  eval vs pure MCTS ({args.eval_mcts_sims} sims): "
-                f"win_rate={wr_mcts:.2f} over {args.eval_games} games "
+                f"W/L/D={ev_mcts['wins']}/{ev_mcts['losses']}/{ev_mcts['draws']}  "
+                f"win_rate={ev_mcts['win_rate']:.2f} over {ev_mcts['n_games']} games "
                 f"({time.time() - t_eval:.1f}s)"
             )
             save_checkpoint(args.checkpoint, net, opt, it, args)
