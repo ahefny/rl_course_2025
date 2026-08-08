@@ -48,10 +48,19 @@ from connect4_mcts import (  # noqa: E402
     P1,
     P2,
     Connect4State,
+    MCTSReuseTree,
     best_move,
     child_by_move,
     mcts_search,
 )
+
+# UI labels for classic MCTS tree-reuse modes (Gradio Radio choices).
+_REUSE_LABELS = {
+    MCTSReuseTree.NO_REUSE: "No reuse",
+    MCTSReuseTree.REUSE_KEEP_SIM: "Reuse: add N new simulations",
+    MCTSReuseTree.REUSE_REDUCE_SIM: "Reuse: add (N - current) new simulations",
+}
+_REUSE_BY_LABEL = {v: k for k, v in _REUSE_LABELS.items()}
 
 
 # ===========================================================================
@@ -253,12 +262,18 @@ MAX_ROWS, MAX_COLS = 12, 12  # slider caps == number of pre-created column butto
 
 
 # -- session helpers --------------------------------------------------------
-def computer_think(sess: dict, n_iter: int, C: float,
-                   reuse_root: Optional[Any] = None) -> None:
+def computer_think(
+    sess: dict,
+    n_iter: int,
+    C: float,
+    reuse_tree: MCTSReuseTree = MCTSReuseTree.NO_REUSE,
+    reuse_root: Optional[Any] = None,
+) -> None:
     """Run MCTS for the computer, store the tree, and play the chosen move.
 
-    Classic mode may warm-start from `reuse_root`. AlphaZero mode always builds
-    a fresh PUCT tree (network priors + values, no rollouts, no Dirichlet noise).
+    Classic mode may warm-start from `reuse_root` according to `reuse_tree`.
+    AlphaZero mode always builds a fresh PUCT tree (network priors + values,
+    no rollouts, no Dirichlet noise).
     """
     state: Connect4State = sess["state"]
     if state.is_terminal():
@@ -276,8 +291,15 @@ def computer_think(sess: dict, n_iter: int, C: float,
         policy, root = az.run(root_state, add_noise=False)
         move = int(policy.argmax())
     else:
+        mode = reuse_tree
+        root_arg = reuse_root
+        # Fall back if the subtree is missing (first move / unexplored line).
+        if mode != MCTSReuseTree.NO_REUSE and root_arg is None:
+            mode = MCTSReuseTree.NO_REUSE
         root = mcts_search(
-            root_state, int(n_iter), float(C), root=reuse_root,
+            root_state, int(n_iter), float(C),
+            reuse_tree=mode,
+            reuse_root=root_arg,
         )
         move = best_move(root)
 
@@ -383,7 +405,10 @@ def render_tree_html(sess: dict, depth: int, top_k: int) -> str:
                 "here after the computer's first move.</div>")
     reuse_note = (
         "" if CFG.az_mode else
-        ' <span style="color:#999;">(exceeds the budget when tree reuse is on)</span>'
+        ' <span style="color:#999;">'
+        "(root N can exceed the budget with "
+        f"“{_REUSE_LABELS[MCTSReuseTree.REUSE_KEEP_SIM]}”)"
+        "</span>"
     )
     value_note = "V = backed-up state value for the side to move ([-1, 1])"
     caption = (
@@ -450,22 +475,27 @@ def on_new_game(rows, cols, connect, n_iter, C, human_first, depth, top_k,
     return render_all(sess, depth, top_k, show_value, n_iter, C)
 
 
-def on_drop(col, sess, n_iter, C, depth, top_k, reuse, show_value):
+def on_drop(col, sess, n_iter, C, depth, top_k, reuse_mode, show_value):
     state = sess["state"]
     if state.is_terminal() or col not in state.get_moves():
         return render_all(sess, depth, top_k, show_value, n_iter, C)
 
+    reuse_tree = _REUSE_BY_LABEL.get(reuse_mode, MCTSReuseTree.NO_REUSE)
     # Warm-start only for classic UCT trees (AZ always searches from scratch).
     reuse_root = None
-    if (not CFG.az_mode) and reuse and sess.get("root") is not None \
-            and "last_computer_move" in sess:
+    if (not CFG.az_mode) and reuse_tree != MCTSReuseTree.NO_REUSE \
+            and sess.get("root") is not None and "last_computer_move" in sess:
         after_computer = az_child_by_move(sess["root"], sess["last_computer_move"])
         if after_computer is not None:
             reuse_root = az_child_by_move(after_computer, col)
 
     state.do_move(col)  # human move
     if not state.is_terminal():
-        computer_think(sess, n_iter, C, reuse_root=reuse_root)  # computer replies
+        computer_think(
+            sess, n_iter, C,
+            reuse_tree=reuse_tree,
+            reuse_root=reuse_root,
+        )
     return render_all(sess, depth, top_k, show_value, n_iter, C)
 
 
@@ -550,9 +580,10 @@ def build_ui() -> "gr.Blocks":
                                    label="Thinking budget N (simulations)")
                 C = gr.Slider(0.0, 3.0, value=c_default, step=0.01,
                               label=c_label)
-                reuse = gr.Checkbox(
-                    value=False,
-                    label="Reuse tree across turns (warm start)",
+                reuse_mode = gr.Radio(
+                    choices=list(_REUSE_LABELS.values()),
+                    value=_REUSE_LABELS[MCTSReuseTree.NO_REUSE],
+                    label="Tree reuse across turns",
                     interactive=not CFG.az_mode,
                     visible=not CFG.az_mode,
                 )
@@ -600,7 +631,8 @@ def build_ui() -> "gr.Blocks":
         for c, btn in enumerate(col_buttons):
             btn.click(
                 partial(on_drop, c),
-                inputs=[sess_state, n_iter, C, depth, top_k, reuse, show_value],
+                inputs=[sess_state, n_iter, C, depth, top_k, reuse_mode,
+                        show_value],
                 outputs=outputs,
             )
         for view_ctrl in (depth, top_k):

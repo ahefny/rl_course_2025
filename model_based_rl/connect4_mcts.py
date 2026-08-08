@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import math
 import random
+import enum
 from typing import List, Optional
 
 import numpy as np
+
 
 
 # ===========================================================================
@@ -153,19 +155,47 @@ class Node:
         self.wins += result
 
 
-def mcts_search(root_state: Connect4State, n_iter: int, C: float,
-                seed: Optional[int] = None, root: Optional[Node] = None) -> Node:
+class MCTSReuseTree(enum.Enum):
+    """Enum for the different tree reuse strategies.
+    
+    Given an MCTS tree rooted at state s, we can reuse the node visits and wins when planning from a state s' that is a child of s.
+    """
+
+    # Do not reuse the parent tree. Each MCTS starts from a fresh tree with 0 visits.
+    NO_REUSE = 0
+    # Reuse the parent tree. add N simulations to existing nodes.
+    # By combining the sim results from the parent tree and the new simulations, 
+    # we can get a more accurate value estimates with the same simulation budget.
+    REUSE_KEEP_SIM = 1
+    # Reuse the parent tree. Instead of running N new simulations, run N-M new simulations,
+    # where M is the number of simulations already run on the parent tree. This reduces the number of simulations
+    # needed to reach the same level of accuracy.
+    REUSE_REDUCE_SIM = 2
+
+def mcts_search(
+        root_state: Connect4State, n_iter: int, C: float,
+        seed: Optional[int] = None,
+        reuse_tree: MCTSReuseTree = MCTSReuseTree.NO_REUSE,
+        reuse_root: Optional[Node] = None) -> Node:
     """Run `n_iter` UCT simulations from `root_state`; return the root node.
 
-    If `root` is given (tree reuse), it is re-rooted (its parent link cut) and
+    If `reuse_root` is given and reuse_tree is not NO_REUSE, it is re-rooted (its parent link cut) and
     the new simulations are added on top of its existing statistics; otherwise a
     fresh 0-visit tree is created.
     """
+    
     rng = random.Random(seed)
+    root = reuse_root
     if root is None:
+        assert reuse_tree == MCTSReuseTree.NO_REUSE, "Reuse options other than NO_REUSE require a reuse_root"
+
+    if reuse_tree == MCTSReuseTree.NO_REUSE:
         root = Node(state=root_state)
     else:
         root.parent = None  # re-root: detach from the previous turn's tree
+
+    if reuse_tree == MCTSReuseTree.REUSE_REDUCE_SIM:
+        n_iter = max(0, n_iter - root.visits)
 
     for _ in range(n_iter):
         node = root
