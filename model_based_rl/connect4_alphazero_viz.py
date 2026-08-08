@@ -16,7 +16,6 @@ import argparse
 import os
 import sys
 from functools import partial
-from typing import List, Optional, Tuple
 
 import gradio as gr
 import numpy as np
@@ -24,14 +23,12 @@ import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from connect4_alphazero import (  # noqa: E402
+from connect4_alphazero import (
     AlphaZeroNet,
-    encode_state,
     net_predict,
     outcome_for,
 )
-from connect4_mcts import EMPTY, P1, P2, Connect4State  # noqa: E402
-
+from connect4_mcts import EMPTY, P1, P2, Connect4State
 
 _DISC_COLORS = {EMPTY: "#ffffff", P1: "#e74c3c", P2: "#f1c40f"}
 MAX_COLS = 12  # pre-created Gradio columns; extras stay hidden
@@ -42,7 +39,7 @@ MAX_COLS = 12  # pre-created Gradio columns; extras stay hidden
 # ===========================================================================
 
 
-def load_model(path: str, device: torch.device) -> Tuple[AlphaZeroNet, dict]:
+def load_model(path: str, device: torch.device) -> tuple[AlphaZeroNet, dict]:
     ckpt = torch.load(path, map_location=device, weights_only=False)
     args = ckpt["args"]
     rows = int(args.get("rows", 6))
@@ -78,7 +75,7 @@ def load_model(path: str, device: torch.device) -> Tuple[AlphaZeroNet, dict]:
 @torch.no_grad()
 def evaluate_actions(
     net: AlphaZeroNet, state: Connect4State, device: torch.device,
-) -> Tuple[np.ndarray, List[Optional[float]], float]:
+) -> tuple[np.ndarray, list[float | None], float]:
     """Return (policy, successor_values, root_value).
 
     `successor_values[c]` is the network value of the state after playing
@@ -96,7 +93,7 @@ def evaluate_actions(
         )
 
     policy, root_value = net_predict(net, state, device)
-    values: List[Optional[float]] = [None] * state.cols
+    values: list[float | None] = [None] * state.cols
     for col in state.get_moves():
         nxt = state.clone()
         nxt.do_move(col)
@@ -139,14 +136,14 @@ def render_board_html(state: Connect4State) -> str:
     return "".join(parts)
 
 
-def _fmt_value(v: Optional[float]) -> str:
+def _fmt_value(v: float | None) -> str:
     if v is None:
         return "—"
     return f"{v:+.2f}"
 
 
-def render_col_stats_html(policy: np.ndarray, values: List[Optional[float]],
-                          cols: int, legal: set) -> List[str]:
+def render_col_stats_html(policy: np.ndarray, values: list[float | None],
+                          cols: int, legal: set) -> list[str]:
     """One HTML snippet per Gradio column slot (including hidden extras).
 
     Policy-best (max π) is highlighted in blue. If the value-best action
@@ -241,7 +238,7 @@ def build_ui(net: AlphaZeroNet, meta: dict, device: torch.device) -> gr.Blocks:
         state: Connect4State = sess["state"]
         if state.is_terminal():
             policy = np.zeros(cols, dtype=np.float32)
-            values: List[Optional[float]] = [None] * cols
+            values: list[float | None] = [None] * cols
             root_value = 0.0
         else:
             policy, values, root_value = evaluate_actions(net, state, device)

@@ -33,19 +33,17 @@ import sys
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Deque, List, Optional, Tuple
 
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 from torch.optim import AdamW
 
 # Allow `python model_based_rl/connect4_alphazero.py` from the repo root.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from connect4_mcts import P1, P2, Connect4State, best_move, mcts_search  # noqa: E402
-
+from connect4_mcts import P1, P2, Connect4State, best_move, mcts_search
 
 # ===========================================================================
 # 1. BOARD ENCODING
@@ -116,7 +114,7 @@ class AlphaZeroNet(nn.Module):
             nn.Tanh(),
         )
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         h = self.projection(x)
         h = self.blocks(h)
         policy = self.policy_head(h)
@@ -126,7 +124,7 @@ class AlphaZeroNet(nn.Module):
 
 @torch.no_grad()
 def net_predict(net: AlphaZeroNet, state: Connect4State,
-                device: torch.device) -> Tuple[np.ndarray, float]:
+                device: torch.device) -> tuple[np.ndarray, float]:
     """Masked policy probabilities over columns + scalar value for `state`."""
     net.eval()
     x = torch.from_numpy(encode_state(state)[None]).to(device)
@@ -152,9 +150,9 @@ def net_predict(net: AlphaZeroNet, state: Connect4State,
 
 
 class AZNode:
-    __slots__ = ("parent", "move", "prior", "children", "N", "W", "Q")
+    __slots__ = ("N", "Q", "W", "children", "move", "parent", "prior")
 
-    def __init__(self, parent: Optional["AZNode"], move: Optional[int],
+    def __init__(self, parent: AZNode | None, move: int | None,
                  prior: float):
         self.parent = parent
         self.move = move          # column played to reach this node (None at root)
@@ -186,7 +184,7 @@ class AZMCTS:
         self.dirichlet_eps = dirichlet_eps
 
     def run(self, root_state: Connect4State,
-            add_noise: bool = True) -> Tuple[np.ndarray, AZNode]:
+            add_noise: bool = True) -> tuple[np.ndarray, AZNode]:
         """Run `n_sims` simulations; return (visit_policy, root_node)."""
         root = AZNode(parent=None, move=None, prior=1.0)
         self._expand(root, root_state)
@@ -218,7 +216,7 @@ class AZMCTS:
             policy /= total
         return policy, root
 
-    def _select(self, node: AZNode) -> Tuple[int, AZNode]:
+    def _select(self, node: AZNode) -> tuple[int, AZNode]:
         move, child = max(
             node.children.items(),
             key=lambda kv: kv[1].puct(self.c_puct),
@@ -239,7 +237,7 @@ class AZMCTS:
         # expects the value of the player who moved into this node, so negate.
         return -value
 
-    def _backup(self, node: Optional[AZNode], value: float) -> None:
+    def _backup(self, node: AZNode | None, value: float) -> None:
         # `value` is for the player who just moved into `node`. Walking up,
         # each parent sees the opposite outcome.
         while node is not None:
@@ -283,15 +281,15 @@ class Sample:
 
 class ReplayBuffer:
     def __init__(self, capacity: int):
-        self.buf: Deque[Sample] = deque(maxlen=capacity)
+        self.buf: deque[Sample] = deque(maxlen=capacity)
 
-    def extend(self, samples: List[Sample]) -> None:
+    def extend(self, samples: list[Sample]) -> None:
         self.buf.extend(samples)
 
     def __len__(self) -> int:
         return len(self.buf)
 
-    def sample(self, batch_size: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def sample(self, batch_size: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         batch = random.sample(self.buf, min(batch_size, len(self.buf)))
         x = torch.from_numpy(np.stack([s.planes for s in batch]))
         pi = torch.from_numpy(np.stack([s.policy for s in batch]))
@@ -300,10 +298,10 @@ class ReplayBuffer:
 
 
 def play_game(mcts: AZMCTS, rows: int, cols: int, connect: int,
-              temp_moves: int = 10) -> List[Sample]:
+              temp_moves: int = 10) -> list[Sample]:
     """One self-play game; returns training samples with filled-in values."""
     state = Connect4State(rows, cols, connect)
-    history: List[Tuple[np.ndarray, np.ndarray, int]] = []  # planes, pi, to_play
+    history: list[tuple[np.ndarray, np.ndarray, int]] = []  # planes, pi, to_play
 
     move_idx = 0
     while not state.is_terminal():
@@ -326,7 +324,7 @@ def play_game(mcts: AZMCTS, rows: int, cols: int, connect: int,
 
 
 def alphazero_loss(logits: torch.Tensor, value: torch.Tensor,
-                   target_pi: torch.Tensor, target_z: torch.Tensor) -> Tuple[
+                   target_pi: torch.Tensor, target_z: torch.Tensor) -> tuple[
                        torch.Tensor, torch.Tensor, torch.Tensor]:
     """Policy cross-entropy + value MSE. Returns (total, policy_loss, value_loss)."""
     log_probs = F.log_softmax(logits, dim=-1)

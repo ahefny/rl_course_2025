@@ -11,14 +11,11 @@ Layout of this file:
 
 from __future__ import annotations
 
+import enum
 import math
 import random
-import enum
-from typing import List, Optional
 
 import numpy as np
-
-
 
 # ===========================================================================
 # 1. CORE GAME LOGIC
@@ -47,7 +44,7 @@ class Connect4State:
         # The player who made the most recent move. Init so that P1 moves first.
         self.player_just_moved = P2
         self.winner = 0  # 0 == no winner yet / draw; otherwise P1 or P2.
-        self.last_move: Optional[tuple] = None  # (row, col) of last placed disc.
+        self.last_move: tuple | None = None  # (row, col) of last placed disc.
 
     # -- basic accessors ----------------------------------------------------
     @property
@@ -55,7 +52,7 @@ class Connect4State:
         """Player about to move."""
         return P1 if self.player_just_moved == P2 else P2
 
-    def clone(self) -> "Connect4State":
+    def clone(self) -> Connect4State:
         s = Connect4State.__new__(Connect4State)
         s.rows, s.cols, s.connect = self.rows, self.cols, self.connect
         s.board = self.board.copy()
@@ -65,7 +62,7 @@ class Connect4State:
         s.last_move = self.last_move
         return s
 
-    def get_moves(self) -> List[int]:
+    def get_moves(self) -> list[int]:
         """Legal moves == columns that are not full (empty if game is over)."""
         if self.winner != 0:
             return []
@@ -122,12 +119,12 @@ class Connect4State:
 
 
 class Node:
-    def __init__(self, state: Connect4State, move: Optional[int] = None,
-                 parent: Optional["Node"] = None):
+    def __init__(self, state: Connect4State, move: int | None = None,
+                 parent: Node | None = None):
         self.move = move              # column played to reach this node (None at root)
         self.parent = parent
-        self.children: List[Node] = []
-        self.untried: List[int] = state.get_moves()
+        self.children: list[Node] = []
+        self.untried: list[int] = state.get_moves()
         self.player_just_moved = state.player_just_moved
         self.visits = 0
         self.wins = 0.0               # summed reward from player_just_moved's view
@@ -141,10 +138,10 @@ class Node:
         explore = C * math.sqrt(math.log(self.parent.visits) / self.visits)
         return exploit + explore
 
-    def uct_select_child(self, C: float) -> "Node":
+    def uct_select_child(self, C: float) -> Node:
         return max(self.children, key=lambda ch: ch.uct_score(C))
 
-    def add_child(self, move: int, state: Connect4State) -> "Node":
+    def add_child(self, move: int, state: Connect4State) -> Node:
         child = Node(state=state, move=move, parent=self)
         self.untried.remove(move)
         self.children.append(child)
@@ -174,9 +171,9 @@ class MCTSReuseTree(enum.Enum):
 
 def mcts_search(
         root_state: Connect4State, n_iter: int, C: float,
-        seed: Optional[int] = None,
+        seed: int | None = None,
         reuse_tree: MCTSReuseTree = MCTSReuseTree.NO_REUSE,
-        reuse_root: Optional[Node] = None) -> Node:
+        reuse_root: Node | None = None) -> Node:
     """Run `n_iter` UCT simulations from `root_state`; return the root node.
 
     If `reuse_root` is given and reuse_tree is not NO_REUSE, it is re-rooted (its parent link cut) and
@@ -231,7 +228,7 @@ def best_move(root: Node) -> int:
     return max(root.children, key=lambda ch: ch.visits).move
 
 
-def child_by_move(node: Node, move: int) -> Optional[Node]:
+def child_by_move(node: Node, move: int) -> Node | None:
     """The child reached by playing `move`, or None if it was never expanded."""
     for ch in node.children:
         if ch.move == move:

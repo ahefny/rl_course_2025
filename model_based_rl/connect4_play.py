@@ -27,9 +27,10 @@ import argparse
 import itertools
 import os
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any
 
 import gradio as gr
 import torch
@@ -37,13 +38,13 @@ import torch
 # Allow `python model_based_rl/connect4_play.py` from the repo root.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from connect4_alphazero import (  # noqa: E402
+from connect4_alphazero import (
     AZMCTS,
     AlphaZeroNet,
     net_predict,
     outcome_for,
 )
-from connect4_mcts import (  # noqa: E402
+from connect4_mcts import (
     EMPTY,
     P1,
     P2,
@@ -71,19 +72,19 @@ _REUSE_BY_LABEL = {v: k for k, v in _REUSE_LABELS.items()}
 @dataclass
 class PlayConfig:
     az_mode: bool = False
-    net: Optional[AlphaZeroNet] = None
-    device: Optional[torch.device] = None
+    net: AlphaZeroNet | None = None
+    device: torch.device | None = None
     rows: int = 6
     cols: int = 7
     connect: int = 4
-    checkpoint_path: Optional[str] = None
-    iteration: Optional[int] = None
+    checkpoint_path: str | None = None
+    iteration: int | None = None
 
 
 CFG = PlayConfig()
 
 
-def load_az_checkpoint(path: str, device: torch.device) -> Tuple[AlphaZeroNet, dict]:
+def load_az_checkpoint(path: str, device: torch.device) -> tuple[AlphaZeroNet, dict]:
     ckpt = torch.load(path, map_location=device, weights_only=False)
     args = ckpt["args"]
     rows = int(args.get("rows", 6))
@@ -139,7 +140,7 @@ def _state_value(node: Any, is_root: bool) -> float:
     return 1.0 - 2.0 * q
 
 
-def _child_list(node: Any) -> List[Tuple[int, Any]]:
+def _child_list(node: Any) -> list[tuple[int, Any]]:
     children = node.children
     if isinstance(children, dict):
         return list(children.items())
@@ -150,7 +151,7 @@ def count_tree_nodes(node: Any) -> int:
     return 1 + sum(count_tree_nodes(ch) for _, ch in _child_list(node))
 
 
-def az_child_by_move(node: Any, move: int) -> Optional[Any]:
+def az_child_by_move(node: Any, move: int) -> Any | None:
     children = node.children
     if isinstance(children, dict):
         return children.get(move)
@@ -267,7 +268,7 @@ def computer_think(
     n_iter: int,
     C: float,
     reuse_tree: MCTSReuseTree = MCTSReuseTree.NO_REUSE,
-    reuse_root: Optional[Any] = None,
+    reuse_root: Any | None = None,
 ) -> None:
     """Run MCTS for the computer, store the tree, and play the chosen move.
 
@@ -363,7 +364,7 @@ def estimate_to_play_value(state: Connect4State,
 
 def estimate_az_values(state: Connect4State,
                        n_iter: int = 100,
-                       C: float = 1.5) -> Tuple[float, float]:
+                       C: float = 1.5) -> tuple[float, float]:
     """Return (network value, AZ-MCTS backed-up value) for the side to move."""
     assert CFG.net is not None and CFG.device is not None
     if state.is_terminal():
@@ -381,7 +382,7 @@ def estimate_az_values(state: Connect4State,
     return v_model, v_mcts
 
 
-def state_value_text(sess: Optional[dict], show_value: bool,
+def state_value_text(sess: dict | None, show_value: bool,
                      n_iter: int = 100, C: float = 1.41) -> str:
     """Line above the column buttons; empty when the checkbox is off."""
     if not show_value or not sess:
@@ -509,7 +510,7 @@ def on_show_value_change(sess, show_value, n_iter, C):
     return state_value_text(sess, show_value, n_iter=n_iter, C=C)
 
 
-def build_ui() -> "gr.Blocks":
+def build_ui() -> gr.Blocks:
     if CFG.az_mode:
         title = "Connect-4 AlphaZero"
         heading = (
@@ -655,7 +656,7 @@ def build_ui() -> "gr.Blocks":
     return demo
 
 
-def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Play Connect-4 against classic MCTS or an AlphaZero checkpoint",
     )
@@ -678,7 +679,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def main(argv: Optional[Sequence[str]] = None) -> None:
+def main(argv: Sequence[str] | None = None) -> None:
     global CFG
     args = parse_args(argv)
     path = args.checkpoint_opt or args.checkpoint
