@@ -92,8 +92,21 @@ class ResidualBlock(nn.Module):
         return F.relu(x + self.mlp(x))
 
 
+def _lex_less(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    """Row-wise lexicographic `a < b` for 2D tensors of shape `(B, D)`."""
+    ne = a != b
+    # First differing index per row (`cumsum == 1`); equal rows stay all-False.
+    first_diff = ne & (ne.to(dtype=a.dtype).cumsum(dim=-1) == 1)
+    return ((a < b) & first_diff).any(dim=-1)
+
+
 class AlphaZeroNet(nn.Module):
-    """Small residual tower with a policy head (over columns) and a value head."""
+    """Small residual tower with a policy head (over columns) and a value head.
+
+    Horizontal mirrors are canonicalized inside `forward`: the lexicographically
+    smaller of `x` and its left–right flip is fed to the trunk; policy logits
+    are flipped back when the mirror was chosen so outputs stay in board order.
+    """
 
     def __init__(self, rows: int = 6, cols: int = 7, hidden_dim: int = 512, blocks: int = 4):
         super().__init__()
@@ -114,12 +127,37 @@ class AlphaZeroNet(nn.Module):
             nn.Tanh(),
         )
 
+    def _get_canonical_representation(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Get the canonical state representation:
+        A state is representated by a vector of size 2 * rows * cols.
+        To increase data efficiency, we ensure the two states that are mirror images of each other
+        are encoded the same way to the network.
+        The canonical representation of a state x is the lexicographically smaller representationof x and its mirror image.
+
+        Args:
+            x: (B, 2 * rows * cols) in board coordinates.
+
+        Returns:
+            x_canon: (B, 2 * rows * cols) in canonical representation.
+            mirror: (B,) boolean tensor indicating whether the state is mirrored.
+        """
+        planes = x.view(x.shape[0], 2, self.rows, self.cols)
+        x_mirror = planes.flip(-1).reshape(x.shape[0], -1)
+        mirror = _lex_less(x_mirror, x)
+        x_canon = torch.where(mirror.unsqueeze(-1), x_mirror, x)
+        return x_canon, mirror
+
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        h = self.projection(x)
+        x_canon, mirror = self._get_canonical_representation(x)
+
+        h = self.projection(x_canon)
         h = self.blocks(h)
-        policy = self.policy_head(h)
+        logits = self.policy_head(h)
         value = self.value_head(h)
-        return policy, value.squeeze(-1)
+
+        # Map policy logits back to the original board's column order.
+        logits_out = torch.where(mirror.unsqueeze(-1), logits.flip(-1), logits)
+        return logits_out, value.squeeze(-1)
 
 
 @torch.no_grad()
