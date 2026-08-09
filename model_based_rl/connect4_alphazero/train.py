@@ -5,15 +5,18 @@ rollouts). Each position is stored with the MCTS visit distribution (policy
 target) and the eventual game outcome (value target). The network is then
 trained on a replay buffer of those triples.
 
-Reuse of game rules:
-    from connect4_mcts import Connect4State, EMPTY, P1, P2
+Game rules / classic MCTS:
+    from core import Connect4State, EMPTY, P1, P2
 
 Run a quick sanity check (CPU/GPU, ~1 min):
-    python model_based_rl/connect4_alphazero.py --iters 3 --games 4 --sims 32 \\
+    python model_based_rl/connect4_alphazero/train.py --iters 3 --games 4 --sims 32 \\
         --train-steps 50 --batch-size 64 --hidden-dim 512 --blocks 4
 
 Fuller training (GPU recommended):
-    python model_based_rl/connect4_alphazero.py --iters 50 --games 25 --sims 100
+    python model_based_rl/connect4_alphazero/train.py --iters 50 --games 25 --sims 100
+
+Checkpoints default to ``model_based_rl/connect4_alphazero/checkpoints/``
+(older runs may still live under ``model_based_rl/checkpoints/``).
 
 Layout of this file:
     1. Board encoding
@@ -40,10 +43,10 @@ import torch.nn.functional as F
 from torch import nn
 from torch.optim import AdamW
 
-# Allow `python model_based_rl/connect4_alphazero/connect4_alphazero.py` from the repo root.
+# Allow `python model_based_rl/connect4_alphazero/train.py` from the repo root.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from lib.core import P1, P2, Connect4State, best_move, mcts_search
+from core import P1, P2, Connect4State, best_move, mcts_search
 
 # ===========================================================================
 # 1. BOARD ENCODING

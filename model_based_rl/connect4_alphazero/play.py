@@ -5,11 +5,11 @@ Graphviz; every node shows the board state it represents plus its visit
 count and value estimate.
 
 Run (classic UCT with random rollouts):
-    python model_based_rl/connect4_play.py
+    python model_based_rl/connect4_alphazero/play.py
 
 Run (AlphaZero PUCT-MCTS with a trained checkpoint):
-    python model_based_rl/connect4_play.py --checkpoint path/to/connect4_az.pt
-    python model_based_rl/connect4_play.py path/to/connect4_az.pt
+    python model_based_rl/connect4_alphazero/play.py --checkpoint path/to/connect4_az.pt
+    python model_based_rl/connect4_alphazero/play.py path/to/connect4_az.pt
 
 Open the browser to http://localhost:7860/
 
@@ -17,8 +17,8 @@ Requirements:
     pip install -r model_based_rl/requirements.txt     # Python packages
     sudo apt install graphviz           # the `dot` binary used to render the tree
 
-Game rules and classic MCTS live in connect4_mcts.py; AlphaZero search lives in
-connect4_alphazero.py. This file is presentation only.
+Game rules and classic MCTS live in ``core.py``; AlphaZero search lives in
+``train.py``. This file is presentation only.
 """
 
 from __future__ import annotations
@@ -37,13 +37,7 @@ import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from connect4_alphazero import (
-    AZMCTS,
-    AlphaZeroNet,
-    net_predict,
-    outcome_for,
-)
-from lib.core import (
+from core import (
     EMPTY,
     P1,
     P2,
@@ -52,6 +46,12 @@ from lib.core import (
     best_move,
     child_by_move,
     mcts_search,
+)
+from train import (
+    AZMCTS,
+    AlphaZeroNet,
+    net_predict,
+    outcome_for,
 )
 
 # UI labels for classic MCTS tree-reuse modes (Gradio Radio choices).

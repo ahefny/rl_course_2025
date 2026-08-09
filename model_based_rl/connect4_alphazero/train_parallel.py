@@ -4,15 +4,14 @@ Self-play runs many games in lockstep. At each MCTS simulation round, every
 active game contributes at most one leaf; those leaves are evaluated in a
 single batched forward pass. Tree select / expand / backup stay on the CPU.
 
-Imports game encoding, the network, AZNode, replay/training helpers, and eval
-from connect4_alphazero.py (that file is not modified).
+Imports training helpers from ``train.py``
 
 Quick sanity check:
-    python model_based_rl/connect4_alphazero_parallel.py --iters 2 --games 8 \\
+    python model_based_rl/connect4_alphazero/train_parallel.py --iters 2 --games 8 \\
         --sims 32 --parallel-games 8 --train-steps 50
 
 Fuller run (GPU recommended):
-    python model_based_rl/connect4_alphazero_parallel.py --iters 50 --games 64 \\
+    python model_based_rl/connect4_alphazero/train_parallel.py --iters 50 --games 64 \\
         --sims 100 --parallel-games 32
 """
 
@@ -32,9 +31,10 @@ from torch.optim import AdamW
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from connect4_alphazero import (
-    AlphaZeroNet,
+from core import Connect4State
+from train import (
     AZNode,
+    AlphaZeroNet,
     ReplayBuffer,
     Sample,
     encode_state,
@@ -44,7 +44,6 @@ from connect4_alphazero import (
     save_checkpoint,
     train_steps,
 )
-from lib.core import Connect4State
 
 # ===========================================================================
 # Batched network evaluation

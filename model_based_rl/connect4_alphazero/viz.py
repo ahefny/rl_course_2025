@@ -4,10 +4,10 @@ You play both sides; after every position the UI shows the network's policy
 over columns and the value of each resulting successor state.
 
 Run:
-    python model_based_rl/connect4_alphazero_viz.py path/to/checkpoint.pt
+    python model_based_rl/connect4_alphazero/viz.py path/to/checkpoint.pt
 
 Optional:
-    python model_based_rl/connect4_alphazero_viz.py path/to/checkpoint.pt --device cpu
+    python model_based_rl/connect4_alphazero/viz.py path/to/checkpoint.pt --device cpu
 """
 
 from __future__ import annotations
@@ -23,12 +23,12 @@ import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from connect4_alphazero import (
+from core import EMPTY, P1, P2, Connect4State
+from train import (
     AlphaZeroNet,
     net_predict,
     outcome_for,
 )
-from lib.core import EMPTY, P1, P2, Connect4State
 
 _DISC_COLORS = {EMPTY: "#ffffff", P1: "#e74c3c", P2: "#f1c40f"}
 MAX_COLS = 12  # pre-created Gradio columns; extras stay hidden

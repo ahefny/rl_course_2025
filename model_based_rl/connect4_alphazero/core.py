@@ -1,8 +1,14 @@
+"""Connect-4 game rules and classic UCT-MCTS (random rollouts).
+
+Also defines light config dataclasses for composing players in larger runners.
+"""
+
 from __future__ import annotations
-from dataclasses import dataclass
+
 import enum
 import math
 import random
+from dataclasses import dataclass
 
 import numpy as np
 
