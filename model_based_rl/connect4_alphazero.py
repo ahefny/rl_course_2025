@@ -117,12 +117,18 @@ class AlphaZeroNet(nn.Module):
         self._blocks = blocks
 
         self.projection = nn.Linear(self._input_dim, self._hidden_dim)
-        self.blocks = nn.Sequential(*[ResidualBlock(self._hidden_dim) for _ in range(self._blocks)])
+        self.blocks = nn.Sequential(
+            *[ResidualBlock(self._hidden_dim) for _ in range(self._blocks)],
+        )
 
         self.policy_head = nn.Sequential(
+            nn.Linear(self._hidden_dim, self._hidden_dim),
+            nn.ReLU(inplace=True),
             nn.Linear(self._hidden_dim, self.cols),
         )
         self.value_head = nn.Sequential(
+            nn.Linear(self._hidden_dim, self._hidden_dim),
+            nn.ReLU(inplace=True),
             nn.Linear(self._hidden_dim, 1),
             nn.Tanh(),
         )
