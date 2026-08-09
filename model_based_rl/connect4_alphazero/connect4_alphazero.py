@@ -40,10 +40,10 @@ import torch.nn.functional as F
 from torch import nn
 from torch.optim import AdamW
 
-# Allow `python model_based_rl/connect4_alphazero.py` from the repo root.
+# Allow `python model_based_rl/connect4_alphazero/connect4_alphazero.py` from the repo root.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from connect4_mcts import P1, P2, Connect4State, best_move, mcts_search
+from lib.core import P1, P2, Connect4State, best_move, mcts_search
 
 # ===========================================================================
 # 1. BOARD ENCODING
@@ -516,7 +516,7 @@ def parse_args() -> argparse.Namespace:
                    default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--checkpoint", type=str,
-                   default="model_based_rl/checkpoints/connect4_az.pt")
+                   default="model_based_rl/connect4_alphazero/checkpoints/connect4_az.pt")
     p.add_argument("--resume", type=str, default=None,
                    help="Path to a checkpoint to resume from")
     return p.parse_args()

@@ -35,7 +35,6 @@ from typing import Any
 import gradio as gr
 import torch
 
-# Allow `python model_based_rl/connect4_play.py` from the repo root.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from connect4_alphazero import (
@@ -44,7 +43,7 @@ from connect4_alphazero import (
     net_predict,
     outcome_for,
 )
-from connect4_mcts import (
+from lib.core import (
     EMPTY,
     P1,
     P2,

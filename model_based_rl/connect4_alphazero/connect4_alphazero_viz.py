@@ -28,7 +28,7 @@ from connect4_alphazero import (
     net_predict,
     outcome_for,
 )
-from connect4_mcts import EMPTY, P1, P2, Connect4State
+from lib.core import EMPTY, P1, P2, Connect4State
 
 _DISC_COLORS = {EMPTY: "#ffffff", P1: "#e74c3c", P2: "#f1c40f"}
 MAX_COLS = 12  # pre-created Gradio columns; extras stay hidden

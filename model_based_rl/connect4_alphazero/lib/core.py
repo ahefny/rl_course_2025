@@ -1,24 +1,78 @@
-"""Connect-4 game rules and classic UCT-MCTS with random rollouts.
-
-Pure logic — no Gradio / Graphviz. For the interactive UI, run:
-
-    python model_based_rl/connect4_play.py
-
-Layout of this file:
-    1. Core game logic      -- Connect4State
-    2. MCTS                  -- Node, mcts_search, best_move, helpers
-"""
-
 from __future__ import annotations
-
+from dataclasses import dataclass
 import enum
 import math
 import random
 
 import numpy as np
 
+
+@dataclass
+class GameRulesConfig:
+    rows: int
+    cols: int
+    connect: int
+
+
+@dataclass
+class PlayerConfig:
+    pass
+
+
+@dataclass
+class HumanPlayerConfig(PlayerConfig):
+    pass
+
+
+@dataclass
+class RandomPlayerConfig(PlayerConfig):
+    pass
+
+
+class MCTSReuseTree(enum.Enum):
+    """Enum for the different tree reuse strategies.
+    
+    Given an MCTS tree rooted at state s, we can reuse the node visits and wins when planning from a state s' that is a child of s.
+    """
+
+    # Do not reuse the parent tree. Each MCTS starts from a fresh tree with 0 visits.
+    NO_REUSE = 0
+    # Reuse the parent tree. add N simulations to existing nodes.
+    # By combining the sim results from the parent tree and the new simulations, 
+    # we can get a more accurate value estimates with the same simulation budget.
+    REUSE_KEEP_SIM = 1
+    # Reuse the parent tree. Instead of running N new simulations, run N-M new simulations,
+    # where M is the number of simulations already run on the parent tree. This reduces the number of simulations
+    # needed to reach the same level of accuracy.
+    REUSE_REDUCE_SIM = 2
+
+
+@dataclass
+class MCTSPlayerConfig(PlayerConfig):
+    num_simulations: int
+    uct_constant: float
+    reuse_tree: MCTSReuseTree
+
+
+@dataclass
+class AZMCTSConfig(PlayerConfig):
+    model_key: str    
+    num_simulations: int
+    uct_constant: float
+
+
+@dataclass
+class GameConfig:
+    game_rules: GameRulesConfig
+    player1: PlayerConfig
+    player2: PlayerConfig
+
+    def swap_players(self) -> None:
+        self.player1, self.player2 = self.player2, self.player1
+
+
 # ===========================================================================
-# 1. CORE GAME LOGIC
+# CORE GAME LOGIC
 # ===========================================================================
 # A Connect-K state on a rows x cols board. Discs are dropped into columns and
 # fall to the lowest empty cell. `board[0]` is the TOP row, `board[rows-1]` the
@@ -28,12 +82,7 @@ EMPTY, P1, P2 = 0, 1, 2
 
 
 class Connect4State:
-    """Immutable-by-convention Connect-K game state.
-
-    Mutating methods (`do_move`) change the object in place; use `clone()`
-    before mutating when you need to keep the original (as MCTS does).
-    """
-
+    
     def __init__(self, rows: int = 6, cols: int = 7, connect: int = 4):
         self.rows = rows
         self.cols = cols
@@ -112,7 +161,7 @@ class Connect4State:
 
 
 # ===========================================================================
-# 2. MCTS
+# MCTS
 # ===========================================================================
 # Classic UCT (Kocsis & Szepesvari) with random rollouts. Each node stores the
 # player that moved to reach it, so backups use the correct perspective.
@@ -151,23 +200,6 @@ class Node:
         self.visits += 1
         self.wins += result
 
-
-class MCTSReuseTree(enum.Enum):
-    """Enum for the different tree reuse strategies.
-    
-    Given an MCTS tree rooted at state s, we can reuse the node visits and wins when planning from a state s' that is a child of s.
-    """
-
-    # Do not reuse the parent tree. Each MCTS starts from a fresh tree with 0 visits.
-    NO_REUSE = 0
-    # Reuse the parent tree. add N simulations to existing nodes.
-    # By combining the sim results from the parent tree and the new simulations, 
-    # we can get a more accurate value estimates with the same simulation budget.
-    REUSE_KEEP_SIM = 1
-    # Reuse the parent tree. Instead of running N new simulations, run N-M new simulations,
-    # where M is the number of simulations already run on the parent tree. This reduces the number of simulations
-    # needed to reach the same level of accuracy.
-    REUSE_REDUCE_SIM = 2
 
 def mcts_search(
         root_state: Connect4State, n_iter: int, C: float,
