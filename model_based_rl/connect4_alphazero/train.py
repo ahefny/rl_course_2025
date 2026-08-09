@@ -344,6 +344,30 @@ class ReplayBuffer:
         return x, pi, z
 
 
+def replay_buffer_path(checkpoint_path: str) -> str:
+    """Sidecar path for the replay buffer: ``<checkpoint>.pt.replay``."""
+    return checkpoint_path + ".replay"
+
+
+def save_replay_buffer(checkpoint_path: str, buf: ReplayBuffer) -> str:
+    path = replay_buffer_path(checkpoint_path)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    torch.save({"samples": list(buf.buf)}, path)
+    return path
+
+
+def load_replay_buffer(checkpoint_path: str, capacity: int) -> ReplayBuffer | None:
+    """Load buffer from ``<checkpoint>.pt.replay``, or None if missing."""
+    path = replay_buffer_path(checkpoint_path)
+    if not os.path.isfile(path):
+        return None
+    data = torch.load(path, weights_only=False)
+    samples = data["samples"] if isinstance(data, dict) else data
+    buf = ReplayBuffer(capacity)
+    buf.extend(samples)
+    return buf
+
+
 def play_game(mcts: AZMCTS, rows: int, cols: int, connect: int,
               temp_moves: int = 10) -> list[Sample]:
     """One self-play game; returns training samples with filled-in values."""
@@ -474,7 +498,8 @@ def evaluate_vs_pure_mcts(net: AlphaZeroNet, device: torch.device,
 
 
 def save_checkpoint(path: str, net: AlphaZeroNet, opt: torch.optim.Optimizer,
-                    iteration: int, args: argparse.Namespace) -> None:
+                    iteration: int, args: argparse.Namespace,
+                    buf: ReplayBuffer | None = None) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     torch.save({
         "iteration": iteration,
@@ -482,6 +507,8 @@ def save_checkpoint(path: str, net: AlphaZeroNet, opt: torch.optim.Optimizer,
         "optimizer": opt.state_dict(),
         "args": vars(args),
     }, path)
+    if buf is not None:
+        save_replay_buffer(path, buf)
 
 
 def parse_args() -> argparse.Namespace:
@@ -550,7 +577,19 @@ def main() -> None:
         net.load_state_dict(ckpt["model"])
         opt.load_state_dict(ckpt["optimizer"])
         start_iter = int(ckpt.get("iteration", 0)) + 1
-        print(f"resumed from {args.resume} at iteration {start_iter}")
+        loaded = load_replay_buffer(args.resume, args.buffer)
+        if loaded is not None:
+            buf = loaded
+            print(
+                f"resumed from {args.resume} at iteration {start_iter}  "
+                f"buf={len(buf)} ({replay_buffer_path(args.resume)})"
+            )
+        else:
+            print(
+                f"resumed from {args.resume} at iteration {start_iter}  "
+                f"no replay file {replay_buffer_path(args.resume)}; "
+                f"starting with empty buffer"
+            )
 
     mcts = AZMCTS(
         net, device,
@@ -609,8 +648,11 @@ def main() -> None:
                 f"win_rate={ev_mcts['win_rate']:.2f} over {ev_mcts['n_games']} games "
                 f"(AZ sims={eval_az_sims}, {time.time() - t_eval:.1f}s)"
             )
-            save_checkpoint(args.checkpoint, net, opt, it, args)
-            print(f"  saved {args.checkpoint}")
+            save_checkpoint(args.checkpoint, net, opt, it, args, buf=buf)
+            print(
+                f"  saved {args.checkpoint}  "
+                f"and {replay_buffer_path(args.checkpoint)} (buf={len(buf)})"
+            )
 
     print("done.")
 

@@ -40,7 +40,9 @@ from train import (
     encode_state,
     evaluate_vs_pure_mcts,
     evaluate_vs_random,
+    load_replay_buffer,
     outcome_for,
+    replay_buffer_path,
     save_checkpoint,
     train_steps,
 )
@@ -357,7 +359,19 @@ def main() -> None:
         net.load_state_dict(ckpt["model"])
         opt.load_state_dict(ckpt["optimizer"])
         start_iter = int(ckpt.get("iteration", 0)) + 1
-        print(f"resumed from {args.resume} at iteration {start_iter}")
+        loaded = load_replay_buffer(args.resume, args.buffer)
+        if loaded is not None:
+            buf = loaded
+            print(
+                f"resumed from {args.resume} at iteration {start_iter}  "
+                f"buf={len(buf)} ({replay_buffer_path(args.resume)})"
+            )
+        else:
+            print(
+                f"resumed from {args.resume} at iteration {start_iter}  "
+                f"no replay file {replay_buffer_path(args.resume)}; "
+                f"starting with empty buffer"
+            )
 
     for it in range(start_iter, args.iters + 1):
         t0 = time.time()
@@ -419,8 +433,11 @@ def main() -> None:
                 f"win_rate={ev_mcts['win_rate']:.2f} over {ev_mcts['n_games']} games "
                 f"(AZ sims={eval_az_sims}, {time.time() - t_eval:.1f}s)"
             )
-            save_checkpoint(args.checkpoint, net, opt, it, args)
-            print(f"  saved {args.checkpoint}")
+            save_checkpoint(args.checkpoint, net, opt, it, args, buf=buf)
+            print(
+                f"  saved {args.checkpoint}  "
+                f"and {replay_buffer_path(args.checkpoint)} (buf={len(buf)})"
+            )
 
     print("done.")
 
