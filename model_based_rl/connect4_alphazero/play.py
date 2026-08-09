@@ -17,8 +17,8 @@ Requirements:
     pip install -r model_based_rl/requirements.txt     # Python packages
     sudo apt install graphviz           # the `dot` binary used to render the tree
 
-Game rules and classic MCTS live in ``core.py``; AlphaZero search lives in
-``train.py``. This file is presentation only.
+Game rules live in ``core.py``, classic MCTS in ``mcts.py``, and AlphaZero
+search in ``train.py``. This file is presentation only.
 """
 
 from __future__ import annotations
@@ -42,6 +42,8 @@ from core import (
     P1,
     P2,
     Connect4State,
+)
+from mcts import (
     MCTSReuseTree,
     best_move,
     child_by_move,

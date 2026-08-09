@@ -5,7 +5,7 @@ rollouts). Each position is stored with the MCTS visit distribution (policy
 target) and the eventual game outcome (value target). The network is then
 trained on a replay buffer of those triples.
 
-Game rules / classic MCTS:
+Game rules:
     from core import Connect4State, EMPTY, P1, P2
 
 Run a quick sanity check (CPU/GPU, ~1 min):
@@ -46,7 +46,8 @@ from torch.optim import AdamW
 # Allow `python model_based_rl/connect4_alphazero/train.py` from the repo root.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from core import P1, P2, Connect4State, best_move, mcts_search
+from core import P1, P2, Connect4State
+from mcts import best_move, mcts_search
 
 # ===========================================================================
 # 1. BOARD ENCODING

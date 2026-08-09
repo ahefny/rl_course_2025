@@ -1,7 +1,8 @@
 """Connect-4 AlphaZero package.
 
 Layout:
-    core.py            – game rules + classic UCT-MCTS
+    core.py            – game rules
+    mcts.py            – classic UCT-MCTS
     train.py           – AlphaZero network, self-play, serial trainer
     train_parallel.py  – batched parallel self-play trainer
     play.py            – Gradio play UI
