@@ -501,6 +501,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--weight-decay", type=float, default=1e-4)
     p.add_argument("--eval-every", type=int, default=5)
     p.add_argument("--eval-games", type=int, default=20)
+    p.add_argument("--eval-azmcts-sims", type=int, default=-1,
+                   help="AZ-MCTS simulations per move during eval "
+                        "(-1 = use --sims)")
     p.add_argument("--eval-mcts-sims", type=int, default=400,
                    help="Pure UCT-MCTS simulations per move for the eval opponent")
     p.add_argument("--device", type=str,
@@ -571,27 +574,31 @@ def main() -> None:
         )
 
         if it % args.eval_every == 0 or it == args.iters:
+            eval_az_sims = (
+                args.sims if args.eval_azmcts_sims < 0 else args.eval_azmcts_sims
+            )
             ev = evaluate_vs_random(
                 net, device, args.rows, args.cols, args.connect,
-                n_games=args.eval_games, sims=max(32, args.sims // 2),
+                n_games=args.eval_games, sims=eval_az_sims,
             )
             print(
                 f"  eval vs random: "
-                f"W/L/D={ev['wins']}/{ev['losses']}/{ev['draws']}  "
-                f"win_rate={ev['win_rate']:.2f} over {ev['n_games']} games"
+                f"W/D/L={ev['wins']}/{ev['draws']}/{ev['losses']}  "
+                f"win_rate={ev['win_rate']:.2f} over {ev['n_games']} games "
+                f"(AZ sims={eval_az_sims})"
             )
             t_eval = time.time()
             ev_mcts = evaluate_vs_pure_mcts(
                 net, device, args.rows, args.cols, args.connect,
                 n_games=args.eval_games,
-                net_sims=args.sims,
+                net_sims=eval_az_sims,
                 opp_sims=args.eval_mcts_sims,
             )
             print(
                 f"  eval vs pure MCTS ({args.eval_mcts_sims} sims): "
-                f"W/L/D={ev_mcts['wins']}/{ev_mcts['losses']}/{ev_mcts['draws']}  "
+                f"W/D/L={ev_mcts['wins']}/{ev_mcts['draws']}/{ev_mcts['losses']}  "
                 f"win_rate={ev_mcts['win_rate']:.2f} over {ev_mcts['n_games']} games "
-                f"({time.time() - t_eval:.1f}s)"
+                f"(AZ sims={eval_az_sims}, {time.time() - t_eval:.1f}s)"
             )
             save_checkpoint(args.checkpoint, net, opt, it, args)
             print(f"  saved {args.checkpoint}")
