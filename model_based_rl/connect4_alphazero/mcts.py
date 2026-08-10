@@ -180,4 +180,4 @@ class MCTSPlayer(Player):
         )
         move = best_move(root)
         self._next_root = child_by_move(root, move)
-        return move
+        return move, {"mcts_search_root": root}

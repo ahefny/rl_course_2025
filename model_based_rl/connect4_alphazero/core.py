@@ -6,6 +6,7 @@ Classic UCT-MCTS lives in ``mcts.py``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -163,5 +164,12 @@ class Player:
         self.game_config = game_config
         self.is_player1 = is_player1
 
-    def get_move(self, state: Connect4State) -> int:
+    def get_move(self, state: Connect4State) -> tuple[int, Any]:
         raise NotImplementedError
+
+
+class RandomPlayer(Player):
+    def get_move(self, state: Connect4State) -> tuple[int, Any]:
+        moves = state.get_moves()
+        return np.random.choice(moves), {}
+
