@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from core import PlayerConfig, Connect4State, Player
+from core import GameConfig, PlayerConfig, Connect4State, Player
 
 # ===========================================================================
 # MCTS
@@ -149,14 +149,35 @@ def count_nodes(node: Node) -> int:
 class MCTSPlayer(Player):
     def __init__(self, config: MCTSPlayerConfig):
         super().__init__(config)
+        self._next_root: Node | None = None
 
+    def init_game(self, game_config: GameConfig, is_player1: bool) -> None:
+        super().init_game(game_config, is_player1)
+        self._next_root = None
 
     def get_move(self, state: Connect4State) -> int:
+        """Pick a move, optionally warm-starting from the subtree left after the
+        previous turn (own move → opponent reply)."""
+        reuse_tree = self.config.reuse_tree
+        reuse_root = None
+        # `_next_root` is the node after our last move. The opponent has since
+        # played `state.last_move`; reuse that child if it was expanded.
+        if (
+            reuse_tree != MCTSReuseTree.NO_REUSE
+            and self._next_root is not None
+            and state.last_move is not None
+        ):
+            reuse_root = child_by_move(self._next_root, state.last_move[1])
+        if reuse_root is None:
+            reuse_tree = MCTSReuseTree.NO_REUSE
+
         root = mcts_search(
-            state=state,
+            state,
             n_iter=self.config.num_simulations,
             C=self.config.uct_constant,
-            reuse_tree=self.config.reuse_tree,
-            reuse_root=None,
+            reuse_tree=reuse_tree,
+            reuse_root=reuse_root,
         )
-        return best_move(root)
+        move = best_move(root)
+        self._next_root = child_by_move(root, move)
+        return move

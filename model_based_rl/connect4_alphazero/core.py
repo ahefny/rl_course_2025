@@ -83,6 +83,16 @@ class Connect4State:
         """Player about to move."""
         return P1 if self.player_just_moved == P2 else P2
 
+    def is_same_state(self, other: Connect4State) -> bool:
+        return (
+            self.rows == other.rows
+            and self.cols == other.cols
+            and self.connect == other.connect
+            and np.array_equal(self.board, other.board)
+            and np.array_equal(self.heights, other.heights)
+            and self.player_just_moved == other.player_just_moved
+        )
+
     def clone(self) -> Connect4State:
         s = Connect4State.__new__(Connect4State)
         s.rows, s.cols, s.connect = self.rows, self.cols, self.connect
