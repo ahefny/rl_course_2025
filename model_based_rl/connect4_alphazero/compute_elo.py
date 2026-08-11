@@ -12,6 +12,7 @@ from copy import copy
 import numpy as np
 from scipy.optimize import minimize
 import json
+import tqdm
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -126,8 +127,6 @@ class EloRatings:
     # Elo ratings for each player
     ratings: dict[str, float]
 
-
-import tqdm
 
 def compute_elo_ratings(
     game_rules_config: GameRulesConfig,
