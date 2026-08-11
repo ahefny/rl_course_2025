@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from core import PlayerConfig, GameConfig, Player
+from core import PlayerConfig, GameConfig, Player, GameRulesConfig
 import torch
 import numpy as np
 import math
@@ -323,6 +323,37 @@ class ModelRegistry:
 _MODEL_REGISTRY = ModelRegistry()
 
 @dataclass
+class PlainAlphaZeroConfig(PlayerConfig):
+    model_path: str
+    device: str    
+
+
+def _validate_model(model_meta: dict, game_rules_config: GameRulesConfig) -> None:
+    model_rules = (model_meta["rows"], model_meta["cols"], model_meta["connect"])
+    if model_rules != (game_rules_config.rows, game_rules_config.cols, game_rules_config.connect):
+        raise ValueError(
+            f"Model game rules {model_rules} do not match configured game rules "
+            f"{(game_rules_config.rows, game_rules_config.cols, game_rules_config.connect)}"
+        )
+
+
+class PlainAlphaZeroPlayer(Player):
+    def __init__(self, config: PlainAlphaZeroConfig):
+        super().__init__(config)
+        self.config = config
+        self.model, self.model_meta = _MODEL_REGISTRY.get_model(config.model_path, config.device)
+
+    def init_game(self, game_config: GameConfig, is_player1: bool) -> None:
+        _validate_model(self.model_meta, game_config.game_rules)
+        super().init_game(game_config, is_player1)
+
+    def get_move(self, state: Connect4State) -> tuple[int, Any]:
+        logits, value = net_predict(self.model, state, torch.device(self.config.device))
+        move = int(np.argmax(logits))
+        return move, {"logits": logits, "value": value}
+
+
+@dataclass
 class AZMCTSConfig(PlayerConfig):
     model_path: str
     device: str
@@ -349,13 +380,7 @@ class AZMCTSPlayer(Player):
         )
 
     def init_game(self, game_config: GameConfig, is_player1: bool) -> None:        
-        game_rules = game_config.game_rules
-        model_rules = (self.model_meta["rows"], self.model_meta["cols"], self.model_meta["connect"])
-        if model_rules != (game_rules.rows, game_rules.cols, game_rules.connect):
-            raise ValueError(
-                f"Model game rules {model_rules} do not match configured game rules "
-                f"{(game_rules.rows, game_rules.cols, game_rules.connect)}"
-            )
+        _validate_model(self.model_meta, game_config.game_rules)
         super().init_game(game_config, is_player1)
 
         self._turn_count = 0
