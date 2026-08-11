@@ -49,11 +49,12 @@ from mcts import (
     child_by_move,
     mcts_search,
 )
-from train import (
+from alpha_zero import (
     AZMCTS,
     AlphaZeroNet,
     net_predict,
     outcome_for,
+    load_az_checkpoint,
 )
 
 # UI labels for classic MCTS tree-reuse modes (Gradio Radio choices).
@@ -83,29 +84,6 @@ class PlayConfig:
 
 
 CFG = PlayConfig()
-
-
-def load_az_checkpoint(path: str, device: torch.device) -> tuple[AlphaZeroNet, dict]:
-    ckpt = torch.load(path, map_location=device, weights_only=False)
-    args = ckpt["args"]
-    rows = int(args.get("rows", 6))
-    cols = int(args.get("cols", 7))
-    connect = int(args.get("connect", 4))
-    hidden_dim = int(args["hidden_dim"])
-    blocks = int(args["blocks"])
-    net = AlphaZeroNet(
-        rows=rows, cols=cols, hidden_dim=hidden_dim, blocks=blocks,
-    ).to(device)
-    net.load_state_dict(ckpt["model"])
-    net.eval()
-    meta = {
-        "rows": rows,
-        "cols": cols,
-        "connect": connect,
-        "iteration": ckpt.get("iteration"),
-        "path": path,
-    }
-    return net, meta
 
 
 # ===========================================================================

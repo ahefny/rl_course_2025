@@ -32,16 +32,18 @@ from torch.optim import AdamW
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core import Connect4State
-from train import (
+from alpha_zero import (
     AZNode,
     AlphaZeroNet,
+    encode_state,
+    outcome_for,
+)
+from train import (
     ReplayBuffer,
     Sample,
-    encode_state,
     evaluate_vs_pure_mcts,
     evaluate_vs_random,
-    load_replay_buffer,
-    outcome_for,
+    load_replay_buffer,    
     replay_buffer_path,
     save_checkpoint,
     train_steps,

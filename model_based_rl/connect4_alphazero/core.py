@@ -34,17 +34,6 @@ class RandomPlayerConfig(PlayerConfig):
 
 
 @dataclass
-class AZMCTSConfig(PlayerConfig):
-    model_key: str    
-    num_simulations: int
-    uct_constant: float
-
-    dirichlet_alpha: float
-    dirichlet_epsilon: float
-    num_hightemperature_turns: int
-
-
-@dataclass
 class GameConfig:
     game_rules: GameRulesConfig
     player1: PlayerConfig

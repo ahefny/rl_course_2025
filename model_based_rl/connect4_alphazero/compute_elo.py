@@ -215,7 +215,7 @@ def get_players() -> list[PlayerConfig]:
         RandomPlayerConfig(name="random"),        
     ] + [
         MCTSPlayerConfig(name=f"mcts_{i}", num_simulations=i, uct_constant=1.0, reuse_tree=MCTSReuseTree.REUSE_REDUCE_SIM)
-        for i in [10, 50, 100] # , 200, 500, 1000]
+        for i in [10, 50, 100, 200, 500, 1000, 2000]
     ]
 
 
@@ -227,7 +227,7 @@ if __name__ == "__main__":
     )
     players = get_players()
 
-    elo_ratings = compute_elo_ratings(game_rules_config, players, 8, 16)
+    elo_ratings = compute_elo_ratings(game_rules_config, players, 64, 16)
     print(elo_ratings)
 
     
