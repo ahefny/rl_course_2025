@@ -27,14 +27,16 @@ from core import (
     RandomPlayerConfig,
     RandomPlayer,
 )
-from mcts import MCTSPlayerConfig, MCTSReuseTree
-from mcts import MCTSPlayer
+from mcts import MCTSPlayerConfig, MCTSReuseTree, MCTSPlayer
+from alpha_zero import AZMCTSConfig, AZMCTSPlayer
 
 def create_player(config: PlayerConfig) -> Player:
     if isinstance(config, MCTSPlayerConfig):
         return MCTSPlayer(config)
     elif isinstance(config, RandomPlayerConfig):
         return RandomPlayer(config)
+    elif isinstance(config, AZMCTSConfig):
+        return AZMCTSPlayer(config)
     else:
         raise ValueError(f"Unknown player config: {config}")
 
@@ -211,12 +213,27 @@ def compute_elo_ratings(
 
 
 def get_players() -> list[PlayerConfig]:
+    MODEL_CKPT = "model_based_rl/connect4_alphazero/checkpoints/connect4_az_b8h512s100_260810_2326.pt"
+
     return [
         RandomPlayerConfig(name="random"),        
     ] + [
-        MCTSPlayerConfig(name=f"mcts_{i}", num_simulations=i, uct_constant=1.0, reuse_tree=MCTSReuseTree.REUSE_REDUCE_SIM)
-        for i in [10, 50, 100, 200, 500, 1000, 2000]
+        AZMCTSConfig(
+            name=f"az_{i}",
+            model_path=MODEL_CKPT,
+            device="cuda",
+            num_simulations=i,
+            uct_constant=1.0,
+            dirichlet_alpha=0.1,
+            dirichlet_epsilon=0.0,
+            num_hightemperature_turns=0,
+        )
+        for i in [10, 50, 100]
     ]
+    # ] + [
+    #     MCTSPlayerConfig(name=f"mcts_{i}", num_simulations=i, uct_constant=1.0, reuse_tree=MCTSReuseTree.REUSE_REDUCE_SIM)
+    #     for i in [10, 50, 100, 200, 500, 1000, 2000]
+    # ]
 
 
 if __name__ == "__main__":
@@ -227,7 +244,7 @@ if __name__ == "__main__":
     )
     players = get_players()
 
-    elo_ratings = compute_elo_ratings(game_rules_config, players, 64, 16)
+    elo_ratings = compute_elo_ratings(game_rules_config, players, 32, 32)
     print(elo_ratings)
 
     

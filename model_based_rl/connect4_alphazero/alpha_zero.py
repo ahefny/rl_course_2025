@@ -1,6 +1,9 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
-from core import GameRulesConfig, PlayerConfig, GameConfig, Player
+from typing import Any
+
+from core import PlayerConfig, GameConfig, Player
 import torch
 import numpy as np
 import math
@@ -297,9 +300,32 @@ def load_az_checkpoint(path: str, device: torch.device) -> tuple[AlphaZeroNet, d
     return net, meta
 
 
+class ModelRegistry:
+    def __init__(self):
+        self._models = {}
+
+    def get_model(self, model_path: str, device: str) -> AlphaZeroNet:
+        model_dict = self._models.get(model_path)
+        if model_dict is None:
+            model_dict = {
+                device: load_az_checkpoint(model_path, device)
+            }
+            self._models[model_path] = model_dict
+        else:
+            model = model_dict.get(device)
+            if model is None:
+                model = next(iter(model_dict.values())).to(device)
+                model_dict[device] = model
+
+        return self._models[model_path][device]
+
+
+_MODEL_REGISTRY = ModelRegistry()
+
 @dataclass
 class AZMCTSConfig(PlayerConfig):
-    model_key: str    
+    model_path: str
+    device: str
     num_simulations: int
     uct_constant: float
 
@@ -312,6 +338,35 @@ class AZMCTSPlayer(Player):
     def __init__(self, config: AZMCTSConfig):
         super().__init__(config)
         self.config = config
-        
+        self.model, self.model_meta = _MODEL_REGISTRY.get_model(config.model_path, config.device)
+        self.mcts = AZMCTS(
+            net=self.model,
+            device=torch.device(config.device),
+            n_sims=config.num_simulations,
+            c_puct=config.uct_constant,
+            dirichlet_alpha=config.dirichlet_alpha,
+            dirichlet_eps=config.dirichlet_epsilon,
+        )
 
+    def init_game(self, game_config: GameConfig, is_player1: bool) -> None:        
+        game_rules = game_config.game_rules
+        model_rules = (self.model_meta["rows"], self.model_meta["cols"], self.model_meta["connect"])
+        if model_rules != (game_rules.rows, game_rules.cols, game_rules.connect):
+            raise ValueError(
+                f"Model game rules {model_rules} do not match configured game rules "
+                f"{(game_rules.rows, game_rules.cols, game_rules.connect)}"
+            )
+        super().init_game(game_config, is_player1)
 
+        self._turn_count = 0
+
+    def get_move(self, state: Connect4State) -> tuple[int, Any]:
+        policy, root = self.mcts.run(
+            state,
+            add_noise=True,
+        )
+        temperature = 1.0 if self._turn_count < self.config.num_hightemperature_turns else 0.0
+        move = sample_move(policy, temperature)
+        self._turn_count += 1
+
+        return move, {"policy": policy, "root": root}
