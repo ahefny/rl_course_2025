@@ -3,117 +3,20 @@
 Specify the player configs in the `get_players` function.
 """
 
+
 import os
 import sys
-from multiprocessing import Pool
-import time
 from dataclasses import dataclass, asdict
-from copy import copy
 import numpy as np
 from scipy.optimize import minimize
 import json
 import tqdm
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from core import (
-    GameConfig,
-    GameRulesConfig,
-    PlayerConfig,
-    Connect4State,
-    Player,
-    P1,
-    P2,
-    RandomPlayerConfig,
-    RandomPlayer,
-)
-from mcts import MCTSPlayerConfig, MCTSReuseTree, MCTSPlayer
-from alpha_zero import AZMCTSConfig, AZMCTSPlayer, PlainAlphaZeroConfig, PlainAlphaZeroPlayer
-
-def create_player(config: PlayerConfig) -> Player:
-    if isinstance(config, MCTSPlayerConfig):
-        return MCTSPlayer(config)
-    elif isinstance(config, RandomPlayerConfig):
-        return RandomPlayer(config)
-    elif isinstance(config, AZMCTSConfig):
-        return AZMCTSPlayer(config)
-    elif isinstance(config, PlainAlphaZeroConfig):
-        return PlainAlphaZeroPlayer(config)
-    else:
-        raise ValueError(f"Unknown player config: {config}")
-
-
-def run_game(game_config: GameConfig) -> float:
-    game_rules_config = game_config.game_rules
-    state = Connect4State(game_rules_config.rows, game_rules_config.cols, game_rules_config.connect)
-
-    player1 = create_player(game_config.player1)
-    player2 = create_player(game_config.player2)
-    player1.init_game(game_config, True)
-    player2.init_game(game_config, False)
-
-    while not state.is_terminal():
-        move, _ = player1.get_move(state)
-        state.do_move(move)
-
-        if state.is_terminal():
-            break
-
-        move, _ = player2.get_move(state)
-        state.do_move(move)
-
-    return state.get_result(P1)
-
-
-def _run_game_worker(game_config: GameConfig) -> float:
-    """Top-level worker so multiprocessing can pickle the target."""
-    return run_game(game_config)
-
-
-def run_n_games(
-    game_config: GameConfig,
-    n_games: int,
-    n_processes: int,
-) -> list[float]:
-    """Play `n_games` independently, optionally in parallel.
-
-    Results are in game-index order (same as a serial loop).
-    """
-    
-    if n_games == 0:
-        return []
-    if n_processes == 1:
-        return [run_game(game_config) for _ in range(n_games)]
-
-    with Pool(processes=n_processes) as pool:
-        return pool.map(_run_game_worker, [game_config] * n_games)
-
-
-@dataclass
-class GameStats:
-    wins: int
-    losses: int
-    draws: int
-    # Average score: defined as: (W + 0.5 * D) / (W + L + D)
-    score: float
-
-def run_game_stats(
-    game_config: GameConfig,
-    n_games_per_turn: int,
-    n_processes: int) -> GameStats:
-
-    results = run_n_games(game_config, n_games_per_turn, n_processes)
-    game_config = copy(game_config)
-    game_config.swap_players()
-    results_swapped = run_n_games(game_config, n_games_per_turn, n_processes)
-    results += [1.0 - result for result in results_swapped]
-
-    return GameStats(
-        wins=results.count(1),
-        losses=results.count(0),
-        draws=results.count(0.5),
-        score=sum(results) / len(results),
-    )
+from game_run_utils import run_game_stats
+from core import GameConfig, GameRulesConfig, PlayerConfig, RandomPlayerConfig
+from alpha_zero import PlainAlphaZeroConfig, AZMCTSConfig
+from mcts import MCTSPlayerConfig, MCTSReuseTree
 
 
 @dataclass(frozen=True)
