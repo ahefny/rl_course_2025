@@ -1,7 +1,16 @@
-"""Create a GIF of cross-entropy-method planning for a 1-D vehicle.
+"""Visualization of CEM planning for a 1-D vehicle (longitudinal planning).
 
-Example:
-    python model_based_rl/visualizations/run_cem.py --seed 7
+The scenario is a vehicle approaching an intersection
+where a perpendicular vehicle is predicted to enter the intersection.
+
+The CEM algorithm is used to plan the acceleration sequence that minimizes the
+cost function. The cost function is a weighted sum of the distance to the intersection,
+the acceleration, the jerk, and the collision with the perpendicular vehicle.
+
+The script generate two GIF animations:
+- CEM planning process. Shows the sampled trajectories, the elite trajectories, and the current mean plan across iterations.
+- Open-loop execution of the final highest-scoring plan.
+Shows how the plan is executed as the ego vehicle and the perpendicular vehicle move in an intersection.
 """
 
 from __future__ import annotations
