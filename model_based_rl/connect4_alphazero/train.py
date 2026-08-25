@@ -48,7 +48,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core import P1, P2, Connect4State
 from mcts import mcts_search, best_move
-from alpha_zero import AZMCTS, AlphaZeroNet, encode_state, outcome_for, sample_move
+from alpha_zero import AZMCTS, AlphaZeroNet, encode_state, outcome_for, sample_move, AZMCTSConfig, AZMCTSPlayer
 
 # ===========================================================================
 # 4. SELF-PLAY + REPLAY BUFFER
@@ -167,7 +167,7 @@ def evaluate_vs_random(net: AlphaZeroNet, device: torch.device,
                        rows: int, cols: int, connect: int,
                        n_games: int = 20, sims: int = 50) -> dict:
     """W/L/D of the net (as P1 and P2) against a uniform random opponent."""
-    mcts = AZMCTS(net, device, n_sims=sims, dirichlet_eps=0.0)
+    mcts = AZMCTS(net, n_sims=sims, dirichlet_eps=0.0)
     wins = losses = draws = 0
     for g in range(n_games):
         state = Connect4State(rows, cols, connect)
@@ -204,7 +204,7 @@ def evaluate_vs_pure_mcts(net: AlphaZeroNet, device: torch.device,
 
     Colors alternate each game. `win_rate` is wins / n_games (draws are not wins).
     """
-    az = AZMCTS(net, device, n_sims=net_sims, dirichlet_eps=0.0)
+    az = AZMCTS(net, n_sims=net_sims, dirichlet_eps=0.0)
     wins = losses = draws = 0
     for g in range(n_games):
         state = Connect4State(rows, cols, connect)
@@ -328,7 +328,7 @@ def main() -> None:
             )
 
     mcts = AZMCTS(
-        net, device,
+        net,
         n_sims=args.sims,
         c_puct=args.c_puct,
         dirichlet_alpha=args.dirichlet_alpha,

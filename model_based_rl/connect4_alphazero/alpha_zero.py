@@ -99,6 +99,10 @@ class AlphaZeroNet(nn.Module):
             nn.Tanh(),
         )
 
+
+    def get_device(self) -> torch.device:
+        return next(self.parameters()).device
+
     def _get_canonical_representation(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Get the canonical state representation:
         A state is representated by a vector of size 2 * rows * cols.
@@ -133,11 +137,10 @@ class AlphaZeroNet(nn.Module):
 
 
 @torch.no_grad()
-def net_predict(net: AlphaZeroNet, state: Connect4State,
-                device: torch.device) -> tuple[np.ndarray, float]:
+def net_predict(net: AlphaZeroNet, state: Connect4State) -> tuple[np.ndarray, float]:
     """Masked policy probabilities over columns + scalar value for `state`."""
     net.eval()
-    x = torch.from_numpy(encode_state(state)[None]).to(device)
+    x = torch.from_numpy(encode_state(state)[None]).to(net.get_device())
     logits, value = net(x)
     logits = logits[0].cpu().numpy()
     legal = state.get_moves()
@@ -183,11 +186,10 @@ class AZNode:
 
 
 class AZMCTS:
-    def __init__(self, net: AlphaZeroNet, device: torch.device,
+    def __init__(self, net: AlphaZeroNet,
                  n_sims: int = 100, c_puct: float = 1.5,
                  dirichlet_alpha: float = 0.3, dirichlet_eps: float = 0.25):
         self.net = net
-        self.device = device
         self.n_sims = n_sims
         self.c_puct = c_puct
         self.dirichlet_alpha = dirichlet_alpha
@@ -239,7 +241,7 @@ class AZMCTS:
         The returned value is immediately re-interpreted as the value for the
         player who just moved (i.e. negated) so that backup is uniform.
         """
-        priors, value = net_predict(self.net, state, self.device)
+        priors, value = net_predict(self.net, state)
         for move in state.get_moves():
             node.children[move] = AZNode(parent=node, move=move,
                                          prior=float(priors[move]))
@@ -324,12 +326,19 @@ _MODEL_REGISTRY = ModelRegistry()
 
 @dataclass
 class PlainAlphaZeroConfig(PlayerConfig):
-    model_path: str
-    device: str    
+    model_path: str | None
+    device: str | None
+
+    def __post_init__(self):
+        assert (self.model_path is not None) == (self.device is not None)
 
 
 def _validate_model(model_meta: dict, game_rules_config: GameRulesConfig) -> None:
-    model_rules = (model_meta["rows"], model_meta["cols"], model_meta["connect"])
+    model_rules = (
+        model_meta["rows"],
+        model_meta["cols"],
+        model_meta["connect"] if model_meta["connect"] != -1 else game_rules_config.connect,
+    )
     if model_rules != (game_rules_config.rows, game_rules_config.cols, game_rules_config.connect):
         raise ValueError(
             f"Model game rules {model_rules} do not match configured game rules "
@@ -338,25 +347,42 @@ def _validate_model(model_meta: dict, game_rules_config: GameRulesConfig) -> Non
 
 
 class PlainAlphaZeroPlayer(Player):
-    def __init__(self, config: PlainAlphaZeroConfig):
+    def __init__(self, config: PlainAlphaZeroConfig, model: AlphaZeroNet | None = None):
         super().__init__(config)
+
+
+        assert (model is None) != (config.model_path is None), (
+            "Exactly one of model or model_path must be provided"
+        )
+
         self.config = config
-        self.model, self.model_meta = _MODEL_REGISTRY.get_model(config.model_path, config.device)
+        if config.model_path is not None:
+            self.model, self.model_meta = _MODEL_REGISTRY.get_model(config.model_path, config.device)            
+        else:
+            self.model = model
+            self.model_meta = {
+                "rows": self.model.rows,
+                "cols": self.model.cols,
+                "connect": -1,   
+            }
+
+    @property
+    def device(self) -> torch.device:
+        return self.model.get_device()
+        
 
     def init_game(self, game_config: GameConfig, is_player1: bool) -> None:
         _validate_model(self.model_meta, game_config.game_rules)
         super().init_game(game_config, is_player1)
 
     def get_move(self, state: Connect4State) -> tuple[int, Any]:
-        logits, value = net_predict(self.model, state, torch.device(self.config.device))
+        logits, value = net_predict(self.model, state)
         move = int(np.argmax(logits))
         return move, {"logits": logits, "value": value}
 
 
 @dataclass
-class AZMCTSConfig(PlayerConfig):
-    model_path: str
-    device: str
+class AZMCTSConfig(PlainAlphaZeroConfig):
     num_simulations: int
     uct_constant: float
 
@@ -366,18 +392,32 @@ class AZMCTSConfig(PlayerConfig):
 
 
 class AZMCTSPlayer(Player):
-    def __init__(self, config: AZMCTSConfig):
+    def __init__(self, config: AZMCTSConfig, model: AlphaZeroNet | None = None):
         super().__init__(config)
         self.config = config
-        self.model, self.model_meta = _MODEL_REGISTRY.get_model(config.model_path, config.device)
+        assert (model is None) != (config.model_path is None), (
+            "Exactly one of model or model_path must be provided"
+        )
+        if config.model_path is not None:
+            self.model, self.model_meta = _MODEL_REGISTRY.get_model(config.model_path, config.device)
+        else:
+            self.model = model
+            self.model_meta = {
+                "rows": self.model.rows,
+                "cols": self.model.cols,
+                "connect": -1,
+            }
         self.mcts = AZMCTS(
             net=self.model,
-            device=torch.device(config.device),
             n_sims=config.num_simulations,
             c_puct=config.uct_constant,
             dirichlet_alpha=config.dirichlet_alpha,
             dirichlet_eps=config.dirichlet_epsilon,
         )
+
+    @property
+    def device(self) -> torch.device:
+        return self.model.get_device()
 
     def init_game(self, game_config: GameConfig, is_player1: bool) -> None:        
         _validate_model(self.model_meta, game_config.game_rules)
