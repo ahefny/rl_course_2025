@@ -24,6 +24,7 @@ class CEMState:
     sampled_positions: np.ndarray
     elite_positions: np.ndarray
     mean_positions: np.ndarray
+    best_positions: np.ndarray
     best_reward: float
     mean_reward: float
 
@@ -43,11 +44,12 @@ def trajectory_rewards(
     dt: float,
     distance_weight: float,
     acceleration_weight: float,
+    jerk_weight: float,
     collision_weight: float,
     collision_time: tuple[float, float],
     collision_distance: tuple[float, float],
 ) -> np.ndarray:
-    """Return distance reward minus acceleration and collision penalties."""
+    """Return distance reward minus acceleration, jerk, and collision penalties."""
     times = np.arange(positions.shape[-1]) * dt
     in_time = (collision_time[0] <= times) & (times <= collision_time[1])
     in_distance = (collision_distance[0] <= positions) & (
@@ -56,7 +58,8 @@ def trajectory_rewards(
     collides = np.any(in_distance & in_time, axis=-1)
     distance_reward = distance_weight * positions[..., -1]
     acceleration_cost = acceleration_weight * np.sum(np.abs(accelerations) * (np.abs(accelerations) > 2) / 2, axis=-1)
-    return distance_reward - acceleration_cost - collision_weight * collides
+    jerk_cost = jerk_weight * np.sum(np.abs(np.diff(accelerations, axis=-1)), axis=-1)
+    return distance_reward - acceleration_cost - jerk_cost - collision_weight * collides
 
 
 def run_cem(args: argparse.Namespace) -> list[CEMState]:
@@ -78,6 +81,7 @@ def run_cem(args: argparse.Namespace) -> list[CEMState]:
             args.dt,
             args.distance_weight,
             args.acceleration_weight,
+            args.jerk_weight,
             args.collision_weight,
             collision_time,
             collision_distance,
@@ -86,6 +90,7 @@ def run_cem(args: argparse.Namespace) -> list[CEMState]:
         elite_accelerations = accelerations[elite_indices]
         mean = elite_accelerations.mean(axis=0)
         std = np.maximum(elite_accelerations.std(axis=0), args.min_std)
+        best_index = int(np.argmax(rewards))
 
         states.append(
             CEMState(
@@ -95,7 +100,8 @@ def run_cem(args: argparse.Namespace) -> list[CEMState]:
                 mean_positions=rollout(
                     mean[np.newaxis, :], args.dt, args.initial_velocity
                 )[0],
-                best_reward=float(rewards[elite_indices].max()),
+                best_positions=positions[best_index],
+                best_reward=float(rewards[best_index]),
                 mean_reward=float(rewards.mean()),
             )
         )
@@ -160,6 +166,117 @@ def draw_frame(axis: plt.Axes, state: CEMState, args: argparse.Namespace) -> Non
     axis.legend(loc="upper left")
 
 
+def perpendicular_vehicle_center(time: float, args: argparse.Namespace) -> float:
+    """Return the red vehicle's horizontal center at ``time``.
+
+    Its front reaches the intersection at collision_t0 and its rear clears it
+    at collision_t1, so it occupies the intersection throughout that interval.
+    """
+    street_width = 3.0
+    safety_buffer_length = 7.0
+    vehicle_length = safety_buffer_length
+    entry_center = -(street_width + vehicle_length) / 2
+    exit_center = (street_width + vehicle_length) / 2
+    speed = (exit_center - entry_center) / (args.collision_t1 - args.collision_t0)
+    return entry_center + speed * (time - args.collision_t0)
+
+
+def draw_plan_frame(
+    axis: plt.Axes, frame: int, best_positions: np.ndarray, args: argparse.Namespace
+) -> None:
+    """Draw the final highest-scoring plan as moving vehicles in an intersection."""
+    ego_length = 4.0
+    ego_width = 1.8
+    street_width = 3.0
+    other_vehicle_length = 4.0
+    safety_buffer_length = 7.0
+    cross_street_width = args.collision_x1 - args.collision_x0 - ego_length
+    intersection_start = args.collision_x0 + ego_length / 2
+    time = frame * args.dt
+    ego_center = best_positions[frame]
+    scene_top = max(float(best_positions.max()) + ego_length, args.collision_x1 + ego_length)
+    scene_bottom = min(-ego_length, intersection_start - ego_length)
+
+    axis.clear()
+    axis.add_patch(
+        Rectangle(
+            (-street_width / 2, scene_bottom),
+            street_width,
+            scene_top - scene_bottom,
+            facecolor="#9e9e9e",
+            edgecolor="none",
+            zorder=0,
+        )
+    )
+    axis.add_patch(
+        Rectangle(
+            (-10, intersection_start),
+            20,
+            cross_street_width,
+            facecolor="#9e9e9e",
+            edgecolor="none",
+            zorder=0,
+        )
+    )
+    axis.add_patch(
+        Rectangle(
+            (-ego_width / 2, ego_center - ego_length / 2),
+            ego_width,
+            ego_length,
+            facecolor="tab:blue",
+            edgecolor="navy",
+            label="Ego vehicle",
+            zorder=3,
+        )
+    )
+    red_center = perpendicular_vehicle_center(time, args)
+    axis.add_patch(
+        Rectangle(
+            (
+                red_center - safety_buffer_length / 2,
+                intersection_start + (cross_street_width - 1.8) / 2,
+            ),
+            safety_buffer_length,
+            1.8,
+            fill=False,
+            edgecolor="tab:red",
+            linewidth=2,
+            label="Safety buffer",
+            zorder=2,
+        )
+    )
+    axis.add_patch(
+        Rectangle(
+            (
+                red_center - other_vehicle_length / 2,
+                intersection_start + (cross_street_width - 1.8) / 2,
+            ),
+            other_vehicle_length,
+            1.8,
+            facecolor="tab:red",
+            edgecolor="maroon",
+            label="Perpendicular vehicle with buffer",
+            zorder=2,
+        )
+    )
+    axis.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.65)
+    axis.text(
+        1.8,
+        0,
+        "Ego center origin",
+        va="center",
+        fontsize=9,
+        color="#333333",
+    )
+    axis.set_aspect("equal", adjustable="box")
+    axis.set_xlim(-10, 10)
+    axis.set_ylim(scene_bottom, scene_top)
+    axis.set_xlabel("Lateral position (m)")
+    axis.set_ylabel("Longitudinal distance (m)")
+    axis.set_title(f"Highest-scoring CEM plan — time {time:.1f} s")
+    axis.legend(loc="upper right")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--horizon", type=int, default=30, help="Planning steps.")
@@ -167,18 +284,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--iterations", type=int, default=25, help="CEM updates.")
     parser.add_argument("--samples", type=int, default=100, help="Samples per update.")
     parser.add_argument("--elites", type=int, default=10, help="Top samples retained.")
-    parser.add_argument("--initial-velocity", type=float, default=2.0)
+    parser.add_argument(
+        "--v0",
+        "--initial-velocity",
+        dest="initial_velocity",
+        type=float,
+        default=2.0,
+        help="Initial ego velocity in m/s (default: 2.0).",
+    )
     parser.add_argument("--initial-acceleration", type=float, default=0.0)
     parser.add_argument("--initial-std", type=float, default=2.0)
     parser.add_argument("--min-std", type=float, default=0.08)
     parser.add_argument("--max-acceleration", type=float, default=4.0)
     parser.add_argument("--distance-weight", "-a", type=float, default=1.0)
     parser.add_argument("--acceleration-weight", "-b", type=float, default=0.15)
+    parser.add_argument(
+        "--jerk-weight",
+        type=float,
+        default=0.1,
+        help="Penalty weight for absolute changes between accelerations.",
+    )
     parser.add_argument("--collision-weight", "-c", type=float, default=100.0)
     parser.add_argument("--collision-t0", type=float, default=2.0)
     parser.add_argument("--collision-t1", type=float, default=3.5)
     parser.add_argument("--collision-x0", type=float, default=3.0)
-    parser.add_argument("--collision-x1", type=float, default=20.0)
+    parser.add_argument("--collision-x1", type=float, default=9.0)
     parser.add_argument("--plot-max-distance", type=float, default=30.0)
     parser.add_argument("--fps", type=int, default=3)
     parser.add_argument("--seed", type=int, default=None)
@@ -187,6 +317,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("cem_longitudinal_planning.gif"),
         help="GIF output path.",
+    )
+    parser.add_argument(
+        "--plan-output",
+        type=Path,
+        default=Path("cem_best_plan.gif"),
+        help="Animation output path for the final highest-scoring plan.",
     )
     return parser.parse_args()
 
@@ -200,6 +336,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--dt, standard deviations, and --fps must be positive.")
     if args.collision_t1 <= args.collision_t0 or args.collision_x1 <= args.collision_x0:
         raise ValueError("Collision region upper bounds must exceed lower bounds.")
+    if args.collision_x1 - args.collision_x0 <= 4.0:
+        raise ValueError("Collision distance range must exceed the 4 m ego length.")
 
 
 def main() -> None:
@@ -221,6 +359,18 @@ def main() -> None:
     animation.save(args.output, writer=PillowWriter(fps=args.fps))
     plt.close(figure)
     print(f"Wrote {args.output}")
+
+    plan_figure, plan_axis = plt.subplots(figsize=(6, 8))
+    plan_animation = FuncAnimation(
+        plan_figure,
+        lambda frame: draw_plan_frame(plan_axis, frame, states[-1].best_positions, args),
+        frames=args.horizon + 1,
+        repeat=False,
+    )
+    args.plan_output.parent.mkdir(parents=True, exist_ok=True)
+    plan_animation.save(args.plan_output, writer=PillowWriter(fps=args.fps))
+    plt.close(plan_figure)
+    print(f"Wrote {args.plan_output}")
 
 
 if __name__ == "__main__":
