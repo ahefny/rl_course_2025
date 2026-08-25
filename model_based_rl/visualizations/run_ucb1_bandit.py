@@ -1,7 +1,7 @@
 """Visualize UCB1 learning on a Bernoulli multi-armed bandit.
 
 Example:
-    python run_bandit.py --probabilities 0.5 0.1 0.8 --iterations 200
+    python run_ucb1_bandit.py --probabilities 0.5 0.1 0.8 --iterations 200
 """
 
 from __future__ import annotations
