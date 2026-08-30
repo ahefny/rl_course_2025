@@ -1,0 +1,4 @@
+stable_baselines3==2.7.1
+gymnasium[box2d]==1.2.3
+gymnasium[mujoco]==1.2.3
+metaworld==3.0.0
