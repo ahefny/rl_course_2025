@@ -1,3 +1,21 @@
+# Running Notebooks
+
+You can run self-contained notebooks locally or in Google Colab.
+To use Google Colab, replace teh Github URL of the notebook
+```
+https://github.com/ahefny/rl_course_2025/blob/main/<path>
+```
+with
+```
+https://colab.research.google.com/github/ahefny/rl_course_2025/blob/main/<path>
+```
+
+For example, the notebook `colab/notebook.ipynb` can be opened in Google Colab using
+```
+https://colab.research.google.com/github/ahefny/rl_course_2025/blob/main/deep_rl/colab/notebook.ipynb
+```
+
+
 # Running Scripts
 
 ## Option 1: Run Locally
@@ -58,8 +76,6 @@ tensorboard --logdir runs
 - [One-time step] Add or remove dependencies as needed. Note that `deep_rl` experiments use a separate `requirements_colab.txt` file.
 - Run the tensorboard cell for experiments that use tensorboard.
 - Replace the experiment script in the last cell with the script you want to run.
-
-
 
 ### Editing code in colab
 
