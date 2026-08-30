@@ -39,8 +39,6 @@ pip install -r llm/requirements.txt
 pip install -r model_based_rl/requirements.txt
 ```
 
-
-
 #### Run experiment
 
 ```sh
@@ -54,8 +52,6 @@ In another terminal run this command to view tensorboard. Open the browser on th
 tensorboard --logdir runs
 ```
 
-
-
 ## Option 2: Run in Colab
 
 - Open the [Colab notebook](https://colab.research.google.com/github/ahefny/rl_course_2025/blob/main/colab/notebook.ipynb).
@@ -67,7 +63,8 @@ tensorboard --logdir runs
 
 ### Editing code in colab
 
-After running the first cell, the downloaded code files can be accessed using "Files" tab
+After running the first cell, the downloaded code files can be accessed using "Files" tab.
+That can be edited for experimentation.
 
 ![Colab Files](colab_files.png)
 

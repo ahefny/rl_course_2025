@@ -1,53 +1,16 @@
-# Running Deep RL Experiments
+## Deep RL Experiments
 
-## Option 1: Run Locally
+This includes demos and excercises on deep RL. Specifically deep online model-free RL algorithms.
 
-### One-time Setup
+**NOTE**: Some of the experiments 
+are inteded to be hyperparameter-tuning excercises. Therefore, running the script as-is may result in poor performance.
+See `sample_runs` for good hyperparameter settings.
 
-Make sure Python, PIP and Git are installed.
+### Running experiments
 
-#### [Optional] Creating and Activating a Python Virtual Environment
+See experiment [README](../README.md)
 
-It is good to install the packages needed for experiments in a separate Python
-virtual environment in order not to mess with your main Python installation
+### Viewing sample runs
 
-```sh
-# Create a new environment in `.venv`.
-# You can replace `.venv` with any path.
-python3 -m venv .venv
-
-# Activate environment
-source .venv/bin/activate
-```
-
-#### Installing Packages
-
-In an empty directory, run
-
-```sh
-git clone https://github.com/ahefny/rl_course_2025.git .
-pip install -r deep_rl/requirements.txt
-```
-
-
-
-### Running Experiments
-
-```sh
-python deep_rl/dqn.py  # To run dqn.py
-```
-
-In another terminal run this command to view tensorboard. Open the browser on the output link.
-
-```
-tensorboard --logdir runs
-```
-
-
-
-## Option 2: Run in Colab
-
-- Open the [Colab notebook](https://colab.research.google.com/github/ahefny/rl_course_2025/blob/main/deep_rl/colab/notebook.ipynb).
-- Replace the script with the one you would like to run
-- Run the cells.
-
+- Launch TensorBoard (locally or in a notebook) using `deep_rl/sample_runs` as the logging directory.
+- Check `config.json` in each run for hyperparameters values.
