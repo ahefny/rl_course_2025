@@ -1,3 +1,5 @@
+This is the code repository for [CSkilled RL Course](https://www.cskilled.com/c-8)
+
 # Running Notebooks
 
 You can run self-contained notebooks locally or in Google Colab.
