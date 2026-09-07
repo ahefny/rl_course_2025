@@ -263,7 +263,7 @@ def computer_think(
     if CFG.az_mode:
         assert CFG.net is not None and CFG.device is not None
         az = AZMCTS(
-            CFG.net, CFG.device,
+            CFG.net,
             n_sims=int(n_iter),
             c_puct=float(C),
             dirichlet_eps=0.0,
@@ -351,7 +351,7 @@ def estimate_az_values(state: Connect4State,
         return z, z
     _, v_model = net_predict(CFG.net, state, CFG.device)
     az = AZMCTS(
-        CFG.net, CFG.device,
+        CFG.net,
         n_sims=int(n_iter),
         c_puct=float(C),
         dirichlet_eps=0.0,
