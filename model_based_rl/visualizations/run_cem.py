@@ -7,10 +7,11 @@ The CEM algorithm is used to plan the acceleration sequence that minimizes the
 cost function. The cost function is a weighted sum of the distance to the intersection,
 the acceleration, the jerk, and the collision with the perpendicular vehicle.
 
-The script generate two GIF animations:
+The script generates three GIF animations:
 - CEM planning process. Shows the sampled trajectories, the elite trajectories, and the current mean plan across iterations.
 - Open-loop execution of the final highest-scoring plan.
 Shows how the plan is executed as the ego vehicle and the perpendicular vehicle move in an intersection.
+- CEM planning process in acceleration space.
 """
 
 from __future__ import annotations
@@ -33,6 +34,9 @@ class CEMState:
     sampled_positions: np.ndarray
     elite_positions: np.ndarray
     mean_positions: np.ndarray
+    sampled_accelerations: np.ndarray
+    elite_accelerations: np.ndarray
+    mean_accelerations: np.ndarray
     best_positions: np.ndarray
     best_reward: float
     mean_reward: float
@@ -109,6 +113,9 @@ def run_cem(args: argparse.Namespace) -> list[CEMState]:
                 mean_positions=rollout(
                     mean[np.newaxis, :], args.dt, args.initial_velocity
                 )[0],
+                sampled_accelerations=accelerations,
+                elite_accelerations=elite_accelerations,
+                mean_accelerations=mean.copy(),
                 best_positions=positions[best_index],
                 best_reward=float(rewards[best_index]),
                 mean_reward=float(rewards.mean()),
@@ -169,6 +176,55 @@ def draw_frame(axis: plt.Axes, state: CEMState, args: argparse.Namespace) -> Non
     axis.set_ylabel("Distance")
     axis.set_title(
         f"CEM longitudinal planning — iteration {state.iteration}/{args.iterations}"
+        f"\nBest reward: {state.best_reward:.1f}; population mean: {state.mean_reward:.1f}"
+    )
+    axis.grid(alpha=0.25)
+    axis.legend(loc="upper left")
+
+
+def draw_acceleration_frame(
+    axis: plt.Axes, state: CEMState, args: argparse.Namespace
+) -> None:
+    """Draw one CEM population in acceleration-sequence space."""
+    axis.clear()
+    times = np.arange(args.horizon) * args.dt
+    axis.plot(
+        times,
+        state.sampled_accelerations.T,
+        color="tab:blue",
+        linewidth=0.6,
+        alpha=0.25,
+        zorder=1,
+    )
+    axis.plot(
+        times,
+        state.elite_accelerations.T,
+        color="tab:blue",
+        linewidth=2.3,
+        alpha=0.9,
+        zorder=2,
+    )
+    axis.plot(
+        times,
+        state.mean_accelerations,
+        color="black",
+        linestyle=":",
+        linewidth=3.2,
+        label="Mean acceleration plan",
+        zorder=3,
+    )
+    max_magnitude = max(
+        args.max_acceleration,
+        float(np.abs(state.sampled_accelerations).max()),
+        1.0,
+    )
+    axis.axhline(0, color="black", linewidth=0.8, alpha=0.35, zorder=0)
+    axis.set_xlim(0, times[-1] if len(times) > 1 else args.dt)
+    axis.set_ylim(-1.1 * max_magnitude, 1.1 * max_magnitude)
+    axis.set_xlabel("Time")
+    axis.set_ylabel("Acceleration")
+    axis.set_title(
+        f"CEM acceleration plans — iteration {state.iteration}/{args.iterations}"
         f"\nBest reward: {state.best_reward:.1f}; population mean: {state.mean_reward:.1f}"
     )
     axis.grid(alpha=0.25)
@@ -306,7 +362,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-std", type=float, default=0.08)
     parser.add_argument("--max-acceleration", type=float, default=4.0)
     parser.add_argument("--distance-weight", "-a", type=float, default=1.0)
-    parser.add_argument("--acceleration-weight", "-b", type=float, default=0.15)
+    parser.add_argument("--acceleration-weight", "-b", type=float, default=0.5)
     parser.add_argument(
         "--jerk-weight",
         type=float,
@@ -332,6 +388,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("cem_best_plan.gif"),
         help="Animation output path for the final highest-scoring plan.",
+    )
+    parser.add_argument(
+        "--acceleration-output",
+        type=Path,
+        default=Path("cem_acceleration_plans.gif"),
+        help="Animation output path for CEM acceleration plans.",
     )
     return parser.parse_args()
 
@@ -368,6 +430,20 @@ def main() -> None:
     animation.save(args.output, writer=PillowWriter(fps=args.fps))
     plt.close(figure)
     print(f"Wrote {args.output}")
+
+    acceleration_figure, acceleration_axis = plt.subplots(figsize=(9, 5.5))
+    acceleration_animation = FuncAnimation(
+        acceleration_figure,
+        lambda frame: draw_acceleration_frame(acceleration_axis, states[frame], args),
+        frames=len(states),
+        repeat=False,
+    )
+    args.acceleration_output.parent.mkdir(parents=True, exist_ok=True)
+    acceleration_animation.save(
+        args.acceleration_output, writer=PillowWriter(fps=args.fps)
+    )
+    plt.close(acceleration_figure)
+    print(f"Wrote {args.acceleration_output}")
 
     plan_figure, plan_axis = plt.subplots(figsize=(6, 8))
     plan_animation = FuncAnimation(
